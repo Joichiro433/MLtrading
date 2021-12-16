@@ -1,0 +1,19 @@
+.vscode/
+.DS_Store
+
+*.png
+*.csv
+*.svg
+*.pkl
+*.xz
+
+.env
+.nohup.txt
+debug*
+secret_key.json
+
+### Python ###
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
