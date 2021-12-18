@@ -3,7 +3,7 @@
 
 # # 初期設定
 
-# In[2]:
+# In[51]:
 
 
 from typing import *
@@ -29,6 +29,7 @@ import lightgbm as lgb
 from sklearn.model_selection import StratifiedKFold, train_test_split, cross_val_score, KFold, TimeSeriesSplit
 from sklearn.metrics import accuracy_score, mean_squared_error, confusion_matrix, classification_report, f1_score, r2_score
 from sklearn.linear_model import Ridge, RidgeCV, LassoCV, LogisticRegression
+from sklearn.ensemble import BaggingRegressor
 import joblib
 
 sns.set_style('whitegrid')
@@ -85,7 +86,7 @@ def calc_mic(x, y):
 
 # # 特徴量生成
 
-# In[6]:
+# In[108]:
 
 
 def calc_features(df):
@@ -215,6 +216,10 @@ def calc_features(df):
     df['uphige_size'] = up_hige_size(df)
     df['downhige_size'] = down_hige_size(df)
 
+    # 平均足を使った戦略: https://note.com/btcml/n/n6198a3714fe5
+    df['heikin_cl'] = 0.25 * (df['open'] + df['high'] + df['low'] + df['close'])
+    df['heikin_op'] = df['heikin_cl'].ewm(1, adjust=False).mean().shift(1)
+
     return df
 
 
@@ -234,7 +239,7 @@ display(df)
 df.to_pickle('df_features.pkl')
 
 
-# In[7]:
+# In[109]:
 
 
 features = sorted([
@@ -293,6 +298,9 @@ features = sorted([
     'cr_std_25',
     'uphige_size',
     'downhige_size',
+
+    'heikin_cl',
+    'heikin_op',
 ])
 
 features_eth = [feature + '_eth' for feature in features]
@@ -305,7 +313,7 @@ print('num of features', len(features))
 
 # ### 時系列依存
 
-# In[8]:
+# In[110]:
 
 
 df = pd.read_pickle('df_features.pkl')
@@ -333,7 +341,7 @@ print('score mean, std', np.mean(scores), np.std(scores))
 
 # # FEP計算
 
-# In[9]:
+# In[111]:
 
 
 @numba.njit
@@ -443,7 +451,7 @@ df.to_pickle('df_y.pkl')
 
 # ### MICで特徴量のパラメータを選択
 
-# In[12]:
+# In[10]:
 
 
 def search_feature_param(df, params: List[float]):
@@ -458,8 +466,6 @@ def search_feature_param(df, params: List[float]):
 # df = pd.read_pickle('df_y.pkl')
 # search_feature_param(df=df, params=[15])
 
-
-# 0.03227525825699646
 
 # ### Shapで特徴量のパラメータを選択
 
@@ -499,7 +505,26 @@ def exec_shap(df):
 
 # # ML
 
-# In[10]:
+# lightgbm boosting_typeの議論: https://www.kaggle.com/c/home-credit-default-risk/discussion/60921
+
+# In[112]:
+
+
+def show_lgb_feature_importances(lgb_model):
+    ranking = np.argsort(-lgb_model.feature_importances_)  # 重要度のindexを降順で取得
+    f, ax = plt.subplots(figsize=(15, 14))
+    var_ = []
+    for index in ranking:
+        var_.append(features[index])
+    # x は特徴量の重要度
+    # yは特徴量の名前
+    sns.barplot(x=lgb_model.feature_importances_[ranking], y =var_, orient='h')
+    ax.set_xlabel("lightGBM feature importance")
+    plt.tight_layout()
+    plt.show()
+
+
+# In[113]:
 
 
 df = pd.read_pickle('df_y.pkl')
@@ -507,7 +532,10 @@ df = df.dropna()
 
 # モデル (コメントアウトで他モデルも試してみてください)
 # model = RidgeCV(alphas=np.logspace(-7, 7, num=20))
-model = lgb.LGBMRegressor(n_jobs=-1, random_state=1)
+model = lgb.LGBMRegressor(boosting_type='gbdt', n_jobs=-1, random_state=1)
+# model = lgb.LGBMRegressor(boosting_type='dart', n_jobs=-1, random_state=1)
+# model = lgb.LGBMRegressor(boosting_type='goss', n_jobs=-1, random_state=1)
+
 
 # アンサンブル (コメントアウトを外して性能を比較してみてください)
 # model = BaggingRegressor(model, random_state=1, n_jobs=1)
@@ -550,22 +578,24 @@ df = df.dropna()
 
 df.to_pickle('df_fit.pkl')
 
+show_lgb_feature_importances(lgb_model=model)
 
-# In[11]:
+
+# In[114]:
 
 
 df[df['y_pred_buy'] > 0]['y_buy'].cumsum().plot(label='buy', rot=60)
 plt.show()
 
 
-# In[12]:
+# In[115]:
 
 
 df[df['y_pred_sell'] > 0]['y_sell'].cumsum().plot(label='sell', rot=60)
 plt.show()
 
 
-# In[13]:
+# In[116]:
 
 
 (df['y_buy'] * (df['y_pred_buy'] > 0) + df['y_sell'] * (df['y_pred_sell'] > 0)).cumsum().plot(label='buy + sell', rot=60)
@@ -574,7 +604,7 @@ plt.show()
 
 # # バックテスト
 
-# In[14]:
+# In[117]:
 
 
 def backtest(
@@ -620,6 +650,183 @@ def backtest(
     return y, poss
 
 df = pd.read_pickle('df_fit.pkl')
+
+# バックテストで累積リターンと、ポジションを計算
+df['cum_ret'], df['poss'] = backtest(
+    cl=df['close'].values,
+    buy_entry=df['y_pred_buy'].values > 0,
+    sell_entry=df['y_pred_sell'].values > 0,
+    buy_cost=df['buy_cost'].values,
+    sell_cost=df['sell_cost'].values,
+)
+
+df['cum_ret'].plot(rot=60)
+plt.title('Cumulative return')
+plt.show()
+
+print('ポジション推移です。変動が細かすぎて青色一色になっていると思います。')
+print('ちゃんと全ての期間でトレードが発生しているので、正常です。')
+df['poss'].plot(rot=60)
+plt.title('Position Changes')
+plt.show()
+
+print('ポジションの平均の推移です。どちらかに偏りすぎていないかなどを確認できます。')
+df['poss'].rolling(1000).mean().plot(rot=60)
+plt.title('Changes in position averages')
+plt.show()
+
+print('取引量(ポジション差分の絶対値)の累積です。')
+print('期間によらず傾きがだいたい同じなので、全ての期間でちゃんとトレードが行われていることがわかります。')
+df['poss'].diff(1).abs().dropna().cumsum().plot(rot=60)
+plt.title('Cumulative trading volume')
+plt.show()
+
+print('t検定')
+x = df['cum_ret'].diff(1).dropna()
+t, p = ttest_1samp(x, 0)
+print('t値 {}'.format(t))
+print('p値 {}'.format(p))
+
+# p平均法 https://note.com/btcml/n/n0d9575882640
+def calc_p_mean(x, n):
+    ps = []
+    for i in range(n):
+        x2 = x[i * x.size // n:(i + 1) * x.size // n]
+        if np.std(x2) == 0:
+            ps.append(1)
+        else:
+            t, p = ttest_1samp(x2, 0)
+            if t > 0:
+                ps.append(p)
+            else:
+                ps.append(1)
+    return np.mean(ps)
+
+def calc_p_mean_type1_error_rate(p_mean, n):
+    return (p_mean * n) ** n / math.factorial(n)
+
+x = df['cum_ret'].diff(1).dropna()
+p_mean_n = 5
+p_mean = calc_p_mean(x, p_mean_n)
+print('p平均法 n = {}'.format(p_mean_n))
+print('p平均 {}'.format(p_mean))
+print('エラー率 {}'.format(calc_p_mean_type1_error_rate(p_mean, p_mean_n)))
+
+
+# # Test
+
+# In[118]:
+
+
+df = pd.read_pickle('df_y.pkl')
+df = df.dropna()
+df = df.reset_index()
+
+train_ratio = 0.65
+df_train = df.loc[:len(df)*train_ratio]
+df_test = df.loc[len(df)*train_ratio + 100:]
+
+
+# モデル (コメントアウトで他モデルも試してみてください)
+# model = RidgeCV(alphas=np.logspace(-7, 7, num=20))
+# model = lgb.LGBMRegressor(boosting_type='gbdt', n_jobs=-1, random_state=1)
+model = lgb.LGBMRegressor(boosting_type='dart', n_jobs=-1, random_state=1)
+# model = lgb.LGBMRegressor(boosting_type='goss', n_jobs=-1, random_state=1)
+
+
+# アンサンブル (コメントアウトを外して性能を比較してみてください)
+# model = BaggingRegressor(model, random_state=1, n_jobs=1)
+
+def model_predict(estimator, X_train, y_train, X_test):
+    # y_pred = [np.nan for _ in range(len(X_test))]
+    # for i in range(len(y_pred)):
+    #     estimator.fit(X_train[i].reshape(-1, 1), y_train[i].reshape(-1, 1))
+    #     y_pred[i] = estimator.predict(X_test[i].reshape(-1, 1))
+    estimator.fit(X_train, y_train)
+    y_pred = estimator.predict(X_test)
+    return y_pred
+
+df = df_test.copy()
+
+df['y_pred_buy'] = model_predict(model, df_train[features].values, df_train['y_buy'].values, df_test[features])
+df['y_pred_sell'] = model_predict(model, df_train[features].values, df_train['y_sell'].values, df_test[features])
+
+# 予測値が無い(nan)行をドロップ
+df = df.dropna().set_index('timestamp')
+df.to_pickle('df_fit_test.pkl')
+show_lgb_feature_importances(lgb_model=model)
+
+
+# In[119]:
+
+
+df = pd.read_pickle('df_fit_test.pkl')
+df[df['y_pred_buy'] > 0]['y_buy'].cumsum().plot(label='buy', rot=60)
+plt.show()
+
+
+# In[120]:
+
+
+df = pd.read_pickle('df_fit_test.pkl')
+df[df['y_pred_sell'] > 0]['y_sell'].cumsum().plot(label='sell', rot=60)
+plt.show()
+
+
+# In[121]:
+
+
+df = pd.read_pickle('df_fit_test.pkl')
+(df['y_buy'] * (df['y_pred_buy'] > 0) + df['y_sell'] * (df['y_pred_sell'] > 0)).cumsum().plot(label='buy + sell', rot=60)
+plt.show()
+
+
+# In[122]:
+
+
+def backtest(
+    cl=None, hi=None, lo=None, pips=None,
+    buy_entry=None, sell_entry=None,
+    buy_cost=None, sell_cost=None):
+    n = cl.size
+    y = cl.copy() * 0.0
+    poss = cl.copy() * 0.0
+    ret = 0.0
+    pos = 0.0
+    for i in range(n):
+        prev_pos = pos
+        
+        # exit
+        if buy_cost[i]:
+            vol = np.maximum(0, -prev_pos)
+            ret -= buy_cost[i] * vol
+            pos += vol
+
+        if sell_cost[i]:
+            vol = np.maximum(0, prev_pos)
+            ret -= sell_cost[i] * vol
+            pos -= vol
+
+        # entry
+        if buy_entry[i] and buy_cost[i]:
+            vol = np.minimum(1.0, 1 - prev_pos) * buy_entry[i]
+            ret -= buy_cost[i] * vol
+            pos += vol
+
+        if sell_entry[i] and sell_cost[i]:
+            vol = np.minimum(1.0, prev_pos + 1) * sell_entry[i]
+            ret -= sell_cost[i] * vol
+            pos -= vol
+        
+        if i + 1 < n:
+            ret += pos * (cl[i + 1] / cl[i] - 1)
+            
+        y[i] = ret
+        poss[i] = pos
+        
+    return y, poss
+
+df = pd.read_pickle('df_fit_test.pkl')
 
 # バックテストで累積リターンと、ポジションを計算
 df['cum_ret'], df['poss'] = backtest(
