@@ -3,7 +3,7 @@
 
 # # 初期設定
 
-# In[51]:
+# In[178]:
 
 
 from typing import *
@@ -44,22 +44,33 @@ pd.set_option('display.width', 1000)
 
 # # データ読み込み
 
-# In[3]:
+# In[179]:
 
 
 df = pd.read_csv('ohlcv_15min_1112.csv')
 display(df)
 
+df_btc_7_5m = pd.read_csv('ohlcv_7.5min_1112_btc.csv')
+display(df_btc_7_5m)
+df_btc_5m = pd.read_csv('ohlcv_5min_1112_btc.csv')
+display(df_btc_5m)
+df_btc_2_5m = pd.read_csv('ohlcv_2.5min_1112_btc.csv')
+display(df_btc_2_5m)
+
 # ETH
 df_eth = pd.read_csv('ohlcv_15min_1112_eth.csv')
 display(df_eth)
+
+df_eth_5m = pd.read_csv('ohlcv_5min_1112_eth.csv')
+display(df_eth_5m)
 
 # XRP
 df_xrp = pd.read_csv('ohlcv_15min_1112_xrp.csv')
 display(df_xrp)
 
 
-# In[4]:
+
+# In[180]:
 
 
 df['fee'] = -0.00025
@@ -69,7 +80,7 @@ df.to_pickle('df_ohlcv_with_fee.pkl')
 
 # # 通貨間相関
 
-# In[5]:
+# In[181]:
 
 
 def calc_mic(x, y):
@@ -86,7 +97,57 @@ def calc_mic(x, y):
 
 # # 特徴量生成
 
-# In[108]:
+# In[182]:
+
+
+def up_hige_size(df):
+    """上ヒゲの大きさ"""
+    df = df.copy()
+    uphige = np.zeros(len(df))
+    high = df.high.values
+    close = df.close.values
+    open_ = df.open.values
+    # close とopenの高い方を判定
+    close_or_open = df.open.values - df.close.values
+    close_or_open_sign = np.sign(close_or_open)
+    close_or_open_sign = np.where(close_or_open_sign == 0, 1, close_or_open_sign)
+    # 陽線
+    for i in range(len(close_or_open_sign)):
+        sig = close_or_open_sign[i]
+        h = high[i]
+        o = open_[i]
+        c = close[i]
+        if sig == 1:
+            uphige[i] = (h - o) / c
+        else:
+            uphige[i] = (h - c) / c
+    uphige = uphige/close
+    return uphige
+
+def down_hige_size(df):
+    """下ヒゲの大きさ"""
+    df = df.copy()
+    downhige = np.zeros(len(df))
+    low = df.low.values
+    close = df.close.values
+    open_ = df.open.values
+    # close とopenの高い方を判定
+    close_or_open = df.open.values - df.close.values
+    close_or_open_sign = np.sign(close_or_open)
+    close_or_open_sign = np.where(close_or_open_sign == 0, 1, close_or_open_sign)
+    # 陽線
+    for i in range(len(close_or_open_sign)):
+        sig = close_or_open_sign[i]
+        l = low[i]
+        o = open_[i]
+        c = close[i]
+
+        if sig == 1:
+            downhige[i] = (c - l) / c
+        else:
+            downhige[i] = (o - l) / c
+    downhige = downhige/close
+    return downhige
 
 
 def calc_features(df):
@@ -95,8 +156,6 @@ def calc_features(df):
     low = df['low']
     close = df['close']
     volume = df['volume']
-    
-    orig_columns = df.columns
 
     hilo = (df['high'] + df['low']) / 2
     df['BBANDS_upperband'], df['BBANDS_middleband'], df['BBANDS_lowerband'] = talib.BBANDS(close, timeperiod=5, nbdevup=2, nbdevdn=2, matype=0)
@@ -162,56 +221,7 @@ def calc_features(df):
     df['STDDEV'] = talib.STDDEV(close, timeperiod=5, nbdev=1)
 
     df['pct'] = df['close'].pct_change()  # 変化率
-    df['cr_std_25']= df['pct'].rolling(25).std()  # 変化率の偏差
-
-    def up_hige_size(df):
-        """上ヒゲの大きさ"""
-        df = df.copy()
-        uphige = np.zeros(len(df))
-        high = df.high.values
-        close = df.close.values
-        open_ = df.open.values
-        # close とopenの高い方を判定
-        close_or_open = df.open.values - df.close.values
-        close_or_open_sign = np.sign(close_or_open)
-        close_or_open_sign = np.where(close_or_open_sign == 0, 1, close_or_open_sign)
-        # 陽線
-        for i in range(len(close_or_open_sign)):
-            sig = close_or_open_sign[i]
-            h = high[i]
-            o = open_[i]
-            c = close[i]
-            if sig == 1:
-                uphige[i] = (h - o) / c
-            else:
-                uphige[i] = (h - c) / c
-        uphige = uphige/close
-        return uphige
-
-    def down_hige_size(df):
-        """下ヒゲの大きさ"""
-        df = df.copy()
-        downhige = np.zeros(len(df))
-        low = df.low.values
-        close = df.close.values
-        open_ = df.open.values
-        # close とopenの高い方を判定
-        close_or_open = df.open.values - df.close.values
-        close_or_open_sign = np.sign(close_or_open)
-        close_or_open_sign = np.where(close_or_open_sign == 0, 1, close_or_open_sign)
-        # 陽線
-        for i in range(len(close_or_open_sign)):
-            sig = close_or_open_sign[i]
-            l = low[i]
-            o = open_[i]
-            c = close[i]
-
-            if sig == 1:
-                downhige[i] = (c - l) / c
-            else:
-                downhige[i] = (o - l) / c
-        downhige = downhige/close
-        return downhige
+    df['pct_std_25']= df['pct'].rolling(25).std()  # 変化率の偏差
     
     df['uphige_size'] = up_hige_size(df)
     df['downhige_size'] = down_hige_size(df)
@@ -223,23 +233,57 @@ def calc_features(df):
     return df
 
 
+def calc_fine_timescale_features(df):
+    open = df['open']
+    high = df['high']
+    low = df['low']
+    close = df['close']
+    volume = df['volume']
+
+    hilo = (df['high'] + df['low']) / 2
+    
+
+    df['pct'] = df['close'].pct_change()  # 変化率
+    df['pct_std_25']= df['pct'].rolling(25).std()  # 変化率の偏差
+    
+    df['uphige_size'] = up_hige_size(df)
+    df['downhige_size'] = down_hige_size(df)
+
+    # 平均足を使った戦略: https://note.com/btcml/n/n6198a3714fe5
+    df['heikin_cl'] = 0.25 * (df['open'] + df['high'] + df['low'] + df['close'])
+    df['heikin_op'] = df['heikin_cl'].ewm(1, adjust=False).mean().shift(1)
+
+    return df
+
+
+
 df = pd.read_pickle('df_ohlcv_with_fee.pkl')
 df = df.dropna()
 df = calc_features(df)
 # display(df)
 
 df_eth = df_eth.dropna()
-df_eth = calc_features(df_eth)
+df_ethf = calc_features(df_eth)
 
+df_btc_7_5mf = calc_fine_timescale_features(df_btc_7_5m)
+df_btc_5mf = calc_fine_timescale_features(df_btc_5m)
+df_btc_2_5mf = calc_fine_timescale_features(df_btc_2_5m)
+df_eth_5mf = calc_fine_timescale_features(df_eth_5m)
 
-df = pd.merge(df, df_eth, on='timestamp', suffixes=['', '_eth']).set_index('timestamp')
+df = pd.merge(df, df_ethf, on='timestamp', suffixes=['', '_eth'])
+df = pd.merge(df, df_btc_7_5mf[::2], on='timestamp', suffixes=['', '_btc7_5m'])
+df = pd.merge(df, df_btc_5mf[::3], on='timestamp', suffixes=['', '_btc5m'])
+# df = pd.merge(df, df_btc_2_5mf[::6], on='timestamp', suffixes=['', '_btc2_5m'])
+# df = pd.merge(df, df_eth_5mf[::3], on='timestamp', suffixes=['', '_eth5m'])
+df = df.set_index('timestamp')
+
 
 display(df)
 
 df.to_pickle('df_features.pkl')
 
 
-# In[109]:
+# In[141]:
 
 
 features = sorted([
@@ -295,7 +339,7 @@ features = sorted([
     'WMA',
 
     'pct',
-    'cr_std_25',
+    'pct_std_25',
     'uphige_size',
     'downhige_size',
 
@@ -303,9 +347,25 @@ features = sorted([
     'heikin_op',
 ])
 
+fine_features = [
+    'pct',
+    'pct_std_25',
+    'uphige_size',
+    'downhige_size',
+    'heikin_cl',
+    'heikin_op',
+]
+
 features_eth = [feature + '_eth' for feature in features]
+# finefeatures_eth = [feature + '_eth5m' for feature in fine_features]
 
 features = features + features_eth
+
+intervals = ['_btc_7_5m', '_btc_5m']
+for interval in intervals:
+    fine_features_btc = [feature + interval for feature in fine_features]
+    features = features + fine_features_btc
+
 
 print(features)
 print('num of features', len(features))
@@ -313,7 +373,7 @@ print('num of features', len(features))
 
 # ### 時系列依存
 
-# In[110]:
+# In[142]:
 
 
 df = pd.read_pickle('df_features.pkl')
@@ -341,7 +401,7 @@ print('score mean, std', np.mean(scores), np.std(scores))
 
 # # FEP計算
 
-# In[111]:
+# In[143]:
 
 
 @numba.njit
@@ -507,7 +567,7 @@ def exec_shap(df):
 
 # lightgbm boosting_typeの議論: https://www.kaggle.com/c/home-credit-default-risk/discussion/60921
 
-# In[112]:
+# In[144]:
 
 
 def show_lgb_feature_importances(lgb_model):
@@ -524,7 +584,7 @@ def show_lgb_feature_importances(lgb_model):
     plt.show()
 
 
-# In[113]:
+# In[145]:
 
 
 df = pd.read_pickle('df_y.pkl')
@@ -581,21 +641,21 @@ df.to_pickle('df_fit.pkl')
 show_lgb_feature_importances(lgb_model=model)
 
 
-# In[114]:
+# In[146]:
 
 
 df[df['y_pred_buy'] > 0]['y_buy'].cumsum().plot(label='buy', rot=60)
 plt.show()
 
 
-# In[115]:
+# In[147]:
 
 
 df[df['y_pred_sell'] > 0]['y_sell'].cumsum().plot(label='sell', rot=60)
 plt.show()
 
 
-# In[116]:
+# In[148]:
 
 
 (df['y_buy'] * (df['y_pred_buy'] > 0) + df['y_sell'] * (df['y_pred_sell'] > 0)).cumsum().plot(label='buy + sell', rot=60)
@@ -604,7 +664,7 @@ plt.show()
 
 # # バックテスト
 
-# In[117]:
+# In[149]:
 
 
 def backtest(
@@ -715,7 +775,7 @@ print('エラー率 {}'.format(calc_p_mean_type1_error_rate(p_mean, p_mean_n)))
 
 # # Test
 
-# In[118]:
+# In[150]:
 
 
 df = pd.read_pickle('df_y.pkl')
@@ -757,7 +817,7 @@ df.to_pickle('df_fit_test.pkl')
 show_lgb_feature_importances(lgb_model=model)
 
 
-# In[119]:
+# In[151]:
 
 
 df = pd.read_pickle('df_fit_test.pkl')
@@ -765,7 +825,7 @@ df[df['y_pred_buy'] > 0]['y_buy'].cumsum().plot(label='buy', rot=60)
 plt.show()
 
 
-# In[120]:
+# In[152]:
 
 
 df = pd.read_pickle('df_fit_test.pkl')
@@ -773,7 +833,7 @@ df[df['y_pred_sell'] > 0]['y_sell'].cumsum().plot(label='sell', rot=60)
 plt.show()
 
 
-# In[121]:
+# In[153]:
 
 
 df = pd.read_pickle('df_fit_test.pkl')
@@ -781,7 +841,7 @@ df = pd.read_pickle('df_fit_test.pkl')
 plt.show()
 
 
-# In[122]:
+# In[154]:
 
 
 def backtest(
