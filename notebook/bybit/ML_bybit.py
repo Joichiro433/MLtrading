@@ -3,7 +3,7 @@
 
 # # 初期設定
 
-# In[178]:
+# In[237]:
 
 
 from typing import *
@@ -11,6 +11,7 @@ import os
 from glob import glob
 from datetime import datetime
 import math
+import random as rn
 
 import numpy as np
 import pandas as pd
@@ -31,11 +32,15 @@ from sklearn.metrics import accuracy_score, mean_squared_error, confusion_matrix
 from sklearn.linear_model import Ridge, RidgeCV, LassoCV, LogisticRegression
 from sklearn.ensemble import BaggingRegressor
 import joblib
+import optuna
 
 sns.set_style('whitegrid')
 colors = ['#de3838', '#007bc3', '#ffd12a']
 markers = ['o', 'x', ',']
 get_ipython().run_line_magic('config', "InlineBackend.figure_formats = ['svg']")
+
+np.random.seed(123)
+rn.seed(123)
 
 pd.set_option('display.max_rows', 500)
 pd.set_option('display.max_columns', 500)
@@ -44,7 +49,7 @@ pd.set_option('display.width', 1000)
 
 # # データ読み込み
 
-# In[179]:
+# In[201]:
 
 
 df = pd.read_csv('ohlcv_15min_1112.csv')
@@ -70,7 +75,7 @@ display(df_xrp)
 
 
 
-# In[180]:
+# In[202]:
 
 
 df['fee'] = -0.00025
@@ -80,7 +85,7 @@ df.to_pickle('df_ohlcv_with_fee.pkl')
 
 # # 通貨間相関
 
-# In[181]:
+# In[203]:
 
 
 def calc_mic(x, y):
@@ -97,7 +102,7 @@ def calc_mic(x, y):
 
 # # 特徴量生成
 
-# In[182]:
+# In[204]:
 
 
 def up_hige_size(df):
@@ -283,7 +288,7 @@ display(df)
 df.to_pickle('df_features.pkl')
 
 
-# In[141]:
+# In[205]:
 
 
 features = sorted([
@@ -361,7 +366,7 @@ features_eth = [feature + '_eth' for feature in features]
 
 features = features + features_eth
 
-intervals = ['_btc_7_5m', '_btc_5m']
+intervals = ['_btc7_5m', '_btc5m']
 for interval in intervals:
     fine_features_btc = [feature + interval for feature in fine_features]
     features = features + fine_features_btc
@@ -373,7 +378,7 @@ print('num of features', len(features))
 
 # ### 時系列依存
 
-# In[142]:
+# In[186]:
 
 
 df = pd.read_pickle('df_features.pkl')
@@ -401,7 +406,7 @@ print('score mean, std', np.mean(scores), np.std(scores))
 
 # # FEP計算
 
-# In[143]:
+# In[206]:
 
 
 @numba.njit
@@ -567,7 +572,7 @@ def exec_shap(df):
 
 # lightgbm boosting_typeの議論: https://www.kaggle.com/c/home-credit-default-risk/discussion/60921
 
-# In[144]:
+# In[207]:
 
 
 def show_lgb_feature_importances(lgb_model):
@@ -584,7 +589,7 @@ def show_lgb_feature_importances(lgb_model):
     plt.show()
 
 
-# In[145]:
+# In[189]:
 
 
 df = pd.read_pickle('df_y.pkl')
@@ -641,21 +646,21 @@ df.to_pickle('df_fit.pkl')
 show_lgb_feature_importances(lgb_model=model)
 
 
-# In[146]:
+# In[190]:
 
 
 df[df['y_pred_buy'] > 0]['y_buy'].cumsum().plot(label='buy', rot=60)
 plt.show()
 
 
-# In[147]:
+# In[191]:
 
 
 df[df['y_pred_sell'] > 0]['y_sell'].cumsum().plot(label='sell', rot=60)
 plt.show()
 
 
-# In[148]:
+# In[192]:
 
 
 (df['y_buy'] * (df['y_pred_buy'] > 0) + df['y_sell'] * (df['y_pred_sell'] > 0)).cumsum().plot(label='buy + sell', rot=60)
@@ -664,7 +669,7 @@ plt.show()
 
 # # バックテスト
 
-# In[149]:
+# In[193]:
 
 
 def backtest(
@@ -775,7 +780,7 @@ print('エラー率 {}'.format(calc_p_mean_type1_error_rate(p_mean, p_mean_n)))
 
 # # Test
 
-# In[150]:
+# In[194]:
 
 
 df = pd.read_pickle('df_y.pkl')
@@ -817,7 +822,7 @@ df.to_pickle('df_fit_test.pkl')
 show_lgb_feature_importances(lgb_model=model)
 
 
-# In[151]:
+# In[195]:
 
 
 df = pd.read_pickle('df_fit_test.pkl')
@@ -825,7 +830,7 @@ df[df['y_pred_buy'] > 0]['y_buy'].cumsum().plot(label='buy', rot=60)
 plt.show()
 
 
-# In[152]:
+# In[196]:
 
 
 df = pd.read_pickle('df_fit_test.pkl')
@@ -833,7 +838,7 @@ df[df['y_pred_sell'] > 0]['y_sell'].cumsum().plot(label='sell', rot=60)
 plt.show()
 
 
-# In[153]:
+# In[197]:
 
 
 df = pd.read_pickle('df_fit_test.pkl')
@@ -841,7 +846,7 @@ df = pd.read_pickle('df_fit_test.pkl')
 plt.show()
 
 
-# In[154]:
+# In[198]:
 
 
 def backtest(
@@ -889,6 +894,181 @@ def backtest(
 df = pd.read_pickle('df_fit_test.pkl')
 
 # バックテストで累積リターンと、ポジションを計算
+df['cum_ret'], df['poss'] = backtest(
+    cl=df['close'].values,
+    buy_entry=df['y_pred_buy'].values > 0,
+    sell_entry=df['y_pred_sell'].values > 0,
+    buy_cost=df['buy_cost'].values,
+    sell_cost=df['sell_cost'].values,
+)
+
+df['cum_ret'].plot(rot=60)
+plt.title('Cumulative return')
+plt.show()
+
+print('ポジション推移です。変動が細かすぎて青色一色になっていると思います。')
+print('ちゃんと全ての期間でトレードが発生しているので、正常です。')
+df['poss'].plot(rot=60)
+plt.title('Position Changes')
+plt.show()
+
+print('ポジションの平均の推移です。どちらかに偏りすぎていないかなどを確認できます。')
+df['poss'].rolling(1000).mean().plot(rot=60)
+plt.title('Changes in position averages')
+plt.show()
+
+print('取引量(ポジション差分の絶対値)の累積です。')
+print('期間によらず傾きがだいたい同じなので、全ての期間でちゃんとトレードが行われていることがわかります。')
+df['poss'].diff(1).abs().dropna().cumsum().plot(rot=60)
+plt.title('Cumulative trading volume')
+plt.show()
+
+print('t検定')
+x = df['cum_ret'].diff(1).dropna()
+t, p = ttest_1samp(x, 0)
+print('t値 {}'.format(t))
+print('p値 {}'.format(p))
+
+# p平均法 https://note.com/btcml/n/n0d9575882640
+def calc_p_mean(x, n):
+    ps = []
+    for i in range(n):
+        x2 = x[i * x.size // n:(i + 1) * x.size // n]
+        if np.std(x2) == 0:
+            ps.append(1)
+        else:
+            t, p = ttest_1samp(x2, 0)
+            if t > 0:
+                ps.append(p)
+            else:
+                ps.append(1)
+    return np.mean(ps)
+
+def calc_p_mean_type1_error_rate(p_mean, n):
+    return (p_mean * n) ** n / math.factorial(n)
+
+x = df['cum_ret'].diff(1).dropna()
+p_mean_n = 5
+p_mean = calc_p_mean(x, p_mean_n)
+print('p平均法 n = {}'.format(p_mean_n))
+print('p平均 {}'.format(p_mean))
+print('エラー率 {}'.format(calc_p_mean_type1_error_rate(p_mean, p_mean_n)))
+
+
+# # Blending
+
+# チューニングはCVで行う必要あり？
+
+# In[222]:
+
+
+def calc_objective(df, buy_preds, sell_preds, weights):
+
+    def calc_objective_p(df):
+        df = df.copy()
+        df['cum_ret'], _ = backtest(
+            cl=df['close'].values,
+            buy_entry=df['y_pred_buy'].values > 0,
+            sell_entry=df['y_pred_sell'].values > 0,
+            buy_cost=df['buy_cost'].values,
+            sell_cost=df['sell_cost'].values)
+        x = df['cum_ret'].diff(1).dropna()
+        p_mean_n = 5
+        p_mean = calc_p_mean(x, p_mean_n)
+        return p_mean
+
+    df = df.copy()
+    df['y_pred_buy'] = np.average(buy_preds, axis=0, weights=weights)
+    df['y_pred_sell'] = np.average(sell_preds, axis=0, weights=weights)
+    p_mean = calc_objective_p(df=df)
+    return p_mean
+
+
+# In[264]:
+
+
+df = pd.read_pickle('df_y.pkl')
+df = df.dropna()
+df = df.reset_index()
+
+train_ratio = 0.60
+valid_ratio = 0.15
+
+df_train = df.loc[:len(df)*train_ratio]
+df_valid = df.loc[len(df)*train_ratio+5:len(df)*(train_ratio+valid_ratio)]
+df_test = df.loc[len(df)*(train_ratio+valid_ratio)+5:]
+
+
+models = []
+
+# モデル (コメントアウトで他モデルも試してみてください)
+models.append(RidgeCV(alphas=np.logspace(-7, 7, num=20)))
+models.append(lgb.LGBMRegressor(boosting_type='gbdt', n_jobs=-1, random_state=1))
+models.append(lgb.LGBMRegressor(boosting_type='dart', n_jobs=-1, random_state=1))
+models.append(lgb.LGBMRegressor(boosting_type='goss', n_jobs=-1, random_state=1))
+
+def model_predict(estimator, X_train, y_train, X_valid):
+    estimator.fit(X_train, y_train)
+    y_pred = estimator.predict(X_valid)
+    return y_pred
+
+buy_preds = []
+sell_preds = []
+
+for model in models:
+    buy_pred = model_predict(model, df_train[features].values, df_train['y_buy'].values, df_valid[features])
+    buy_preds.append(buy_pred)
+    sell_pred = model_predict(model, df_train[features].values, df_train['y_sell'].values, df_valid[features])
+    sell_preds.append(sell_pred)
+    
+
+
+# In[265]:
+
+
+class Objective:
+    def __init__(self, num_models):
+        self.num_models = num_models
+
+    def __call__(self, trial):
+        weights = [trial.suggest_uniform('weight' + str(n), 0, 1) for n in range(self.num_models)]
+        return calc_objective(df=df_valid, buy_preds=buy_preds, sell_preds=sell_preds, weights=weights)
+
+objective = Objective(num_models = len(models))
+
+sampler = optuna.samplers.TPESampler(seed=1)
+study = optuna.create_study(sampler=sampler)
+study.optimize(objective, n_trials = 500)
+
+
+best_weight = list(study.best_params.values())
+best_weight = np.array(best_weight) / np.sum(best_weight)
+best_score = study.best_value
+print('best score: {0}\nbest weight: {1}'.format(best_score, best_weight))
+
+
+# In[266]:
+
+
+best_weight
+
+
+# In[267]:
+
+
+buy_preds = []
+sell_preds = []
+
+for model in models:
+    buy_pred = model_predict(model, df_train[features].values, df_train['y_buy'].values, df_test[features])
+    buy_preds.append(buy_pred)
+    sell_pred = model_predict(model, df_train[features].values, df_train['y_sell'].values, df_test[features])
+    sell_preds.append(sell_pred)
+
+df = df_test.copy()
+df['y_pred_buy'] = np.average(buy_preds, axis=0, weights=best_weight)
+df['y_pred_sell'] = np.average(sell_preds, axis=0, weights=best_weight)
+
 df['cum_ret'], df['poss'] = backtest(
     cl=df['close'].values,
     buy_entry=df['y_pred_buy'].values > 0,
