@@ -406,7 +406,7 @@ print('score mean, std', np.mean(scores), np.std(scores))
 
 # # FEP計算
 
-# In[206]:
+# In[292]:
 
 
 @numba.njit
@@ -510,6 +510,19 @@ plt.legend(bbox_to_anchor=(1.05, 1))
 plt.show()
 
 df.to_pickle('df_y.pkl')
+
+
+# * buy_fet(約定までの時間)が1.0の場合、取引を行ったこと(buy_executed=1.0)とする
+# * buy_fet > 1 の場合はポジションをキャンセルとする
+# * buy_fetが1.0となる条件は、buy_fep[i] < low[i+1] である
+# * 指値での約定なので、buy_costはマイナスである
+# * エントリーしてからエグジットを始めるまでの待ち時間はhorizonで定義（初期値は１） 
+# * df['sell_fep'].shift(-horizon) / df['buy_price'] - 1 - 2 * fee で利益を計算
+
+# In[302]:
+
+
+df[['close', 'low', 'buy_price', 'buy_fep', 'buy_fet', 'buy_executed', 'buy_cost', 'sell_fep', 'y_buy']].tail(20)
 
 
 # # 特徴量選択
@@ -669,7 +682,7 @@ plt.show()
 
 # # バックテスト
 
-# In[193]:
+# In[303]:
 
 
 def backtest(
@@ -697,16 +710,21 @@ def backtest(
 
         # entry
         if buy_entry[i] and buy_cost[i]:
-            vol = np.minimum(1.0, 1 - prev_pos) * buy_entry[i]
+            vol = np.minimum(1.0, 1 - prev_pos) * buy_entry[i]  # 既にエントリ済みならエントリしない
             ret -= buy_cost[i] * vol
             pos += vol
 
         if sell_entry[i] and sell_cost[i]:
-            vol = np.minimum(1.0, prev_pos + 1) * sell_entry[i]
+            vol = np.minimum(1.0, prev_pos + 1) * sell_entry[i]  # 既にエントリ済みならエントリしない
             ret -= sell_cost[i] * vol
             pos -= vol
         
         if i + 1 < n:
+            # 実際の指値は終値からいくらかずらした値(ATRを使って終値からずらした指値)だった。
+            # つまり、実際は終値よりもちょっとだけ良い値段でエントリしたり決済したはず、その分を先にcostとして計算しておき、後にまとめて調整する仕組み。
+            # costと呼んでいるが、実際には終値からの調整幅を記録した値、と考えるとすっきりしそう。
+            # ポジションがある限り終値の差分を計算していくので、含み益、あるいは含み損を持ち越している。
+            # また、決済の指値は機械学習の判定は関係なく常に出している。
             ret += pos * (cl[i + 1] / cl[i] - 1)
             
         y[i] = ret
@@ -776,6 +794,21 @@ p_mean = calc_p_mean(x, p_mean_n)
 print('p平均法 n = {}'.format(p_mean_n))
 print('p平均 {}'.format(p_mean))
 print('エラー率 {}'.format(calc_p_mean_type1_error_rate(p_mean, p_mean_n)))
+
+
+# In[308]:
+
+
+df['y_pred_buy'] > 0
+
+
+# In[309]:
+
+
+df_temp = df.copy()
+df_temp['should_buy'] = df['y_pred_buy'] > 0
+df_temp['should_sell'] = df['y_pred_buy'] > 0
+df_temp[['should_buy', 'buy_cost', 'should_sell', 'sell_cost']].tail(20)
 
 
 # # Test
@@ -955,11 +988,270 @@ print('p平均 {}'.format(p_mean))
 print('エラー率 {}'.format(calc_p_mean_type1_error_rate(p_mean, p_mean_n)))
 
 
+# # ハイパーパラメータチューニング
+
+# In[284]:
+
+
+df = pd.read_pickle('df_y.pkl')
+df = df.dropna()
+df = df.reset_index()
+
+train_ratio = 0.65
+df_train = df.loc[:int(len(df)*train_ratio)]
+df_test = df.loc[int(len(df)*train_ratio) + 5:]
+
+cv_indicies = list(KFold().split(df_train))
+# ウォークフォワード法
+# cv_indicies = list(TimeSeriesSplit().split(df))
+
+# OOS予測値を計算
+def my_cross_val_predict(estimator, X, y=None, cv=None):
+    y_pred = y.copy()
+    y_pred[:] = np.nan
+    for train_idx, val_idx in cv:
+        estimator.fit(X[train_idx], y[train_idx])
+        y_pred[val_idx] = estimator.predict(X[val_idx])
+    return y_pred
+
+def calc_objective_p(df):
+        df = df.copy()
+        df['cum_ret'], _ = backtest(
+            cl=df['close'].values,
+            buy_entry=df['y_pred_buy'].values > 0,
+            sell_entry=df['y_pred_sell'].values > 0,
+            buy_cost=df['buy_cost'].values,
+            sell_cost=df['sell_cost'].values)
+        x = df['cum_ret'].diff(1).dropna()
+        p_mean_n = 5
+        p_mean = calc_p_mean(x, p_mean_n)
+        return p_mean
+
+def objectives(trial):
+    #==== 最適化したいパラメータ ====
+    lambda_l1 = trial.suggest_loguniform('lambda_l1', 1e-8, 10.0)
+    lambda_l2 = trial.suggest_loguniform('lambda_l2', 1e-8, 10.0)
+    learning_rate = trial.suggest_uniform('learning_rate', 0.1, 1.0)
+    colsample_bytree = trial.suggest_uniform('learning_rate', 0.1, 1.0)
+    subsample = trial.suggest_uniform('learning_rate', 0.1, 1.0)
+    min_child_samples = trial.suggest_int('min_child_samples', 5, 50)
+    # min_child_weight = trial.suggest_int('min_child_weight', 5, 50)
+    max_depth = trial.suggest_int('max_depth', 3, 15)
+    params = {
+        "reg_alpha": lambda_l1,
+        "reg_lambda": lambda_l2,
+        "learning_rate": learning_rate,
+        "colsample_bytree": colsample_bytree,
+        "subsample" : subsample,
+        "min_child_samples": min_child_samples,
+        # "min_child_weight": min_child_weight,
+        "max_depth": max_depth}
+
+    model = lgb.LGBMRegressor(boosting_type='gbdt', random_state=1, **params)
+
+    def calc_objective_pred(df_train):
+        df_train = df_train.copy()
+        df_train['y_pred_buy'] = my_cross_val_predict(model, df_train[features].values, df_train['y_buy'].values, cv=cv_indicies)
+        df_train['y_pred_sell'] = my_cross_val_predict(model, df_train[features].values, df_train['y_sell'].values, cv=cv_indicies)
+        return df_train
+
+    df = calc_objective_pred(df_train=df_train)
+    p_mean = calc_objective_p(df=df)
+    return p_mean
+
+
+sampler = optuna.samplers.TPESampler(seed=1)
+study = optuna.create_study(sampler=sampler)
+study.optimize(objectives, n_trials=500)
+
+best_params = study.best_params
+best_score = study.best_value
+
+print('best score: {0}\nbest params: {1}'.format(best_score, best_params))
+
+
+# In[285]:
+
+
+best_params
+
+
+# In[287]:
+
+
+df = pd.read_pickle('df_y.pkl')
+df = df.dropna()
+df = df.reset_index()
+
+train_ratio = 0.65
+df_train = df.loc[:len(df)*train_ratio]
+df_test = df.loc[len(df)*train_ratio + 5:]
+
+
+# モデル (コメントアウトで他モデルも試してみてください)
+# model = RidgeCV(alphas=np.logspace(-7, 7, num=20))
+model = lgb.LGBMRegressor(boosting_type='gbdt', random_state=1, **best_params)
+# model = lgb.LGBMRegressor(boosting_type='dart', n_jobs=-1, random_state=1)
+# model = lgb.LGBMRegressor(boosting_type='goss', n_jobs=-1, random_state=1)
+
+
+# アンサンブル (コメントアウトを外して性能を比較してみてください)
+# model = BaggingRegressor(model, random_state=1, n_jobs=1)
+
+def model_predict(estimator, X_train, y_train, X_test):
+    estimator.fit(X_train, y_train)
+    y_pred = estimator.predict(X_test)
+    return y_pred
+
+df = df_test.copy()
+
+df['y_pred_buy'] = model_predict(model, df_train[features].values, df_train['y_buy'].values, df_test[features])
+df['y_pred_sell'] = model_predict(model, df_train[features].values, df_train['y_sell'].values, df_test[features])
+
+# 予測値が無い(nan)行をドロップ
+df = df.dropna().set_index('timestamp')
+df.to_pickle('df_fit_test.pkl')
+show_lgb_feature_importances(lgb_model=model)
+
+
+# In[288]:
+
+
+df = pd.read_pickle('df_fit_test.pkl')
+df[df['y_pred_buy'] > 0]['y_buy'].cumsum().plot(label='buy', rot=60)
+plt.show()
+
+
+# In[289]:
+
+
+df = pd.read_pickle('df_fit_test.pkl')
+df[df['y_pred_sell'] > 0]['y_sell'].cumsum().plot(label='sell', rot=60)
+plt.show()
+
+
+# In[290]:
+
+
+df = pd.read_pickle('df_fit_test.pkl')
+(df['y_buy'] * (df['y_pred_buy'] > 0) + df['y_sell'] * (df['y_pred_sell'] > 0)).cumsum().plot(label='buy + sell', rot=60)
+plt.show()
+
+
+# In[291]:
+
+
+def backtest(
+    cl=None, hi=None, lo=None, pips=None,
+    buy_entry=None, sell_entry=None,
+    buy_cost=None, sell_cost=None):
+    n = cl.size
+    y = cl.copy() * 0.0
+    poss = cl.copy() * 0.0
+    ret = 0.0
+    pos = 0.0
+    for i in range(n):
+        prev_pos = pos
+        
+        # exit
+        if buy_cost[i]:
+            vol = np.maximum(0, -prev_pos)
+            ret -= buy_cost[i] * vol
+            pos += vol
+
+        if sell_cost[i]:
+            vol = np.maximum(0, prev_pos)
+            ret -= sell_cost[i] * vol
+            pos -= vol
+
+        # entry
+        if buy_entry[i] and buy_cost[i]:
+            vol = np.minimum(1.0, 1 - prev_pos) * buy_entry[i]
+            ret -= buy_cost[i] * vol
+            pos += vol
+
+        if sell_entry[i] and sell_cost[i]:
+            vol = np.minimum(1.0, prev_pos + 1) * sell_entry[i]
+            ret -= sell_cost[i] * vol
+            pos -= vol
+        
+        if i + 1 < n:
+            ret += pos * (cl[i + 1] / cl[i] - 1)
+            
+        y[i] = ret
+        poss[i] = pos
+        
+    return y, poss
+
+df = pd.read_pickle('df_fit_test.pkl')
+
+# バックテストで累積リターンと、ポジションを計算
+df['cum_ret'], df['poss'] = backtest(
+    cl=df['close'].values,
+    buy_entry=df['y_pred_buy'].values > 0,
+    sell_entry=df['y_pred_sell'].values > 0,
+    buy_cost=df['buy_cost'].values,
+    sell_cost=df['sell_cost'].values,
+)
+
+df['cum_ret'].plot(rot=60)
+plt.title('Cumulative return')
+plt.show()
+
+print('ポジション推移です。変動が細かすぎて青色一色になっていると思います。')
+print('ちゃんと全ての期間でトレードが発生しているので、正常です。')
+df['poss'].plot(rot=60)
+plt.title('Position Changes')
+plt.show()
+
+print('ポジションの平均の推移です。どちらかに偏りすぎていないかなどを確認できます。')
+df['poss'].rolling(1000).mean().plot(rot=60)
+plt.title('Changes in position averages')
+plt.show()
+
+print('取引量(ポジション差分の絶対値)の累積です。')
+print('期間によらず傾きがだいたい同じなので、全ての期間でちゃんとトレードが行われていることがわかります。')
+df['poss'].diff(1).abs().dropna().cumsum().plot(rot=60)
+plt.title('Cumulative trading volume')
+plt.show()
+
+print('t検定')
+x = df['cum_ret'].diff(1).dropna()
+t, p = ttest_1samp(x, 0)
+print('t値 {}'.format(t))
+print('p値 {}'.format(p))
+
+# p平均法 https://note.com/btcml/n/n0d9575882640
+def calc_p_mean(x, n):
+    ps = []
+    for i in range(n):
+        x2 = x[i * x.size // n:(i + 1) * x.size // n]
+        if np.std(x2) == 0:
+            ps.append(1)
+        else:
+            t, p = ttest_1samp(x2, 0)
+            if t > 0:
+                ps.append(p)
+            else:
+                ps.append(1)
+    return np.mean(ps)
+
+def calc_p_mean_type1_error_rate(p_mean, n):
+    return (p_mean * n) ** n / math.factorial(n)
+
+x = df['cum_ret'].diff(1).dropna()
+p_mean_n = 5
+p_mean = calc_p_mean(x, p_mean_n)
+print('p平均法 n = {}'.format(p_mean_n))
+print('p平均 {}'.format(p_mean))
+print('エラー率 {}'.format(calc_p_mean_type1_error_rate(p_mean, p_mean_n)))
+
+
 # # Blending
 
 # チューニングはCVで行う必要あり？
 
-# In[222]:
+# In[268]:
 
 
 def calc_objective(df, buy_preds, sell_preds, weights):
@@ -984,46 +1276,51 @@ def calc_objective(df, buy_preds, sell_preds, weights):
     return p_mean
 
 
-# In[264]:
+# In[276]:
 
 
 df = pd.read_pickle('df_y.pkl')
 df = df.dropna()
 df = df.reset_index()
 
-train_ratio = 0.60
-valid_ratio = 0.15
-
-df_train = df.loc[:len(df)*train_ratio]
-df_valid = df.loc[len(df)*train_ratio+5:len(df)*(train_ratio+valid_ratio)]
-df_test = df.loc[len(df)*(train_ratio+valid_ratio)+5:]
+train_ratio = 0.65
+df_train = df.loc[:int(len(df)*train_ratio)]
+df_test = df.loc[int(len(df)*train_ratio) + 5:]
 
 
 models = []
-
 # モデル (コメントアウトで他モデルも試してみてください)
 models.append(RidgeCV(alphas=np.logspace(-7, 7, num=20)))
 models.append(lgb.LGBMRegressor(boosting_type='gbdt', n_jobs=-1, random_state=1))
 models.append(lgb.LGBMRegressor(boosting_type='dart', n_jobs=-1, random_state=1))
 models.append(lgb.LGBMRegressor(boosting_type='goss', n_jobs=-1, random_state=1))
 
-def model_predict(estimator, X_train, y_train, X_valid):
-    estimator.fit(X_train, y_train)
-    y_pred = estimator.predict(X_valid)
+
+# 通常のCV
+cv_indicies = list(KFold().split(df_train))
+# ウォークフォワード法
+# cv_indicies = list(TimeSeriesSplit().split(df))
+
+# OOS予測値を計算
+def my_cross_val_predict(estimator, X, y=None, cv=None):
+    y_pred = y.copy()
+    y_pred[:] = np.nan
+    for train_idx, val_idx in cv:
+        estimator.fit(X[train_idx], y[train_idx])
+        y_pred[val_idx] = estimator.predict(X[val_idx])
     return y_pred
 
 buy_preds = []
 sell_preds = []
 
 for model in models:
-    buy_pred = model_predict(model, df_train[features].values, df_train['y_buy'].values, df_valid[features])
+    buy_pred = my_cross_val_predict(model, df_train[features].values, df_train['y_buy'].values, cv=cv_indicies)
     buy_preds.append(buy_pred)
-    sell_pred = model_predict(model, df_train[features].values, df_train['y_sell'].values, df_valid[features])
+    sell_pred = my_cross_val_predict(model, df_train[features].values, df_train['y_sell'].values, cv=cv_indicies)
     sell_preds.append(sell_pred)
-    
 
 
-# In[265]:
+# In[277]:
 
 
 class Objective:
@@ -1032,13 +1329,13 @@ class Objective:
 
     def __call__(self, trial):
         weights = [trial.suggest_uniform('weight' + str(n), 0, 1) for n in range(self.num_models)]
-        return calc_objective(df=df_valid, buy_preds=buy_preds, sell_preds=sell_preds, weights=weights)
+        return calc_objective(df=df_train, buy_preds=buy_preds, sell_preds=sell_preds, weights=weights)
 
 objective = Objective(num_models = len(models))
 
 sampler = optuna.samplers.TPESampler(seed=1)
 study = optuna.create_study(sampler=sampler)
-study.optimize(objective, n_trials = 500)
+study.optimize(objective, n_trials=500)
 
 
 best_weight = list(study.best_params.values())
@@ -1047,14 +1344,19 @@ best_score = study.best_value
 print('best score: {0}\nbest weight: {1}'.format(best_score, best_weight))
 
 
-# In[266]:
+# In[278]:
 
 
 best_weight
 
 
-# In[267]:
+# In[279]:
 
+
+def model_predict(estimator, X_train, y_train, X_valid):
+    estimator.fit(X_train, y_train)
+    y_pred = estimator.predict(X_valid)
+    return y_pred
 
 buy_preds = []
 sell_preds = []
