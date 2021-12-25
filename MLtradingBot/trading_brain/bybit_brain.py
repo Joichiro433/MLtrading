@@ -17,41 +17,44 @@ Model = Any
 
 class MLJudgement:
     def __init__(self) -> None:
-        features_btc5m = [feature + '_btc5m' for feature in BYBIT_FINE_FEAURES]
-        features_btc2_5m = [feature + '_btc2_5m' for feature in BYBIT_FINE_FEAURES]
-        features_btc7_5m = [feature + '_btc7_5m' for feature in BYBIT_FINE_FEAURES]
-        features_eth = [feature + '_eth' for feature in BYBIT_FEAURES]
-        features_eth5m = [feature + '_eth5m' for feature in BYBIT_FINE_FEAURES]
+        features_btc5m : List[str] = [feature + '_btc5m' for feature in BYBIT_FINE_FEAURES]
+        features_btc2_5m : List[str] = [feature + '_btc2_5m' for feature in BYBIT_FINE_FEAURES]
+        features_btc7_5m : List[str] = [feature + '_btc7_5m' for feature in BYBIT_FINE_FEAURES]
+        features_eth : List[str] = [feature + '_eth' for feature in BYBIT_FEAURES]
+        features_eth5m : List[str] = [feature + '_eth5m' for feature in BYBIT_FINE_FEAURES]
         self.features : List[str] = BYBIT_FEAURES + features_btc5m + features_btc2_5m + features_btc7_5m + features_eth + features_eth5m  # 使用する特徴量
         self.models_dir_path : str = os.path.join('trained_models', 'bybit')
         self.regression_model_names : List[str] = ['gbdt', 'dart', 'goss', 'ridge']  # Blending重み最適化を行った順番
         self.classification_model_names : List[str] = ['gbdt_class', 'dart_class', 'goss_class']  # Blending重み最適化を行った順番
+        self.regression_models, self.classification_models = self._load_models()
         self.blending_weights : NDArray[float] = np.load(os.path.join(self.models_dir_path, 'blending_weights.npy'), allow_pickle='TRUE')
         assert len(self.blending_weights) == 7, f'blending_weightsの要素数が7で無く不正. length of blendgin_weights: {self.blending_weights}'
 
     def predict(self, df_features: pd.DataFrame) -> pd.DataFrame:
-        regression_models, classification_models = self._load_models()
         X = df_features[self.features]
         buy_preds : List[NDArray[int]] = []
         sell_preds : List[NDArray[int]] = []
         # 回帰モデルで予測
         for model_name in self.regression_model_names:
-            buy_model : Model = regression_models['buy'][model_name]
+            buy_model : Model = self.regression_models['buy'][model_name]
             buy_pred : NDArray[float] = buy_model.predict(X)
             buy_preds.append(np.sign(buy_pred))  # 1: should trade, -1: should not trade
-            sell_model : Model = regression_models['sell'][model_name]
+            sell_model : Model = self.regression_models['sell'][model_name]
             sell_pred : NDArray[float] = sell_model.predict(X)
             sell_preds.append(np.sign(sell_pred))  # 1: should trade, -1: should not trade
         # 分類モデルで予測
         for model_name in self.classification_model_names:
-            buy_model : Model = classification_models['buy'][model_name]
+            buy_model : Model = self.classification_models['buy'][model_name]
             buy_pred : NDArray[int] = buy_model.predict(X)
             buy_preds.append(buy_pred)  # 1: should trade, -1: should not trade
-            sell_model : Model = classification_models['sell'][model_name]
+            sell_model : Model = self.classification_models['sell'][model_name]
             sell_pred : NDArray[int] = sell_model.predict(X)
             sell_preds.append(sell_pred)  # 1: should trade, -1: should not trade
         
         df = df_features.copy()
+        # order価格
+        df['buy_price'] = df['close'] - df['ATR'] * 0.5
+        df['buy_price'] = df['close'] + df['ATR'] * 0.5
         # Blendingで予測
         df['y_pred_buy'] = np.average(buy_preds, axis=0, weights=self.blending_weights)
         df['y_pred_sell'] = np.average(sell_preds, axis=0, weights=self.blending_weights)

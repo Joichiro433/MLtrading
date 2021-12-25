@@ -26,7 +26,7 @@ class Ohlc:
 
     Attributes
     ----------
-    open_time : datetime
+    timestamp : datetime
         ローソク足の取得時刻
     open : float
         始値
@@ -41,13 +41,13 @@ class Ohlc:
     """
     def __init__(
             self, 
-            open_time: datetime, 
+            timestamp: datetime, 
             open: float, 
             high: float, 
             low: float, 
             close: float,
             volume: float) -> None:
-        self.open_time : datetime = open_time
+        self.timestamp : datetime = timestamp
         self.open : float = open
         self.high : float = high
         self.low : float = low
@@ -277,7 +277,7 @@ class ApiClient:
             Ohlcインスタンスに変換されたローソク足情報
         """
         ohlc : Ohlc = Ohlc(
-            open_time=datetime.fromtimestamp(dict['open_time']),
+            timestamp=datetime.fromtimestamp(dict['timestamp']),
             open=float(dict['open']),
             high=float(dict['high']),
             low=float(dict['low']),
