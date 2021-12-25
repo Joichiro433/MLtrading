@@ -108,6 +108,8 @@ class FeatureCreator:
         df = pd.merge(df, self._get_every_15min_datas(df_eth_5mf), on='timestamp', suffixes=['', '_eth5m'])
         df = df.set_index('timestamp')
 
+        logger.info('Created features')
+        logger.info(df[['timestamp', 'open', 'high', 'low', 'close']].tail(2))
         df_features = df.dropna()
         return df_features
 

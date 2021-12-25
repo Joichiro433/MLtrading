@@ -239,6 +239,8 @@ class ApiClient:
                 delta, unit_time = timedelta(minutes=num_ohlcs), 1
             elif time_interval == constants.DURATION_5M:
                 delta, unit_time = timedelta(minutes=num_ohlcs*5), 5
+            elif time_interval == constants.DURATION_15M:
+                delta, unit_time = timedelta(minutes=num_ohlcs*15), 15
             elif time_interval == constants.DURATION_30M:
                 delta, unit_time = timedelta(minutes=num_ohlcs*30), 30
             elif time_interval == constants.DURATION_1H:
@@ -277,7 +279,7 @@ class ApiClient:
             Ohlcインスタンスに変換されたローソク足情報
         """
         ohlc : Ohlc = Ohlc(
-            timestamp=datetime.fromtimestamp(dict['timestamp']),
+            timestamp=datetime.fromtimestamp(dict['open_time']),
             open=float(dict['open']),
             high=float(dict['high']),
             low=float(dict['low']),
