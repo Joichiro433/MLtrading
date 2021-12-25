@@ -5,12 +5,14 @@
 *.csv
 *.svg
 *.pkl
+*.npy
 *.xz
 
 .env
 .nohup.txt
+log/
 debug*
-secret_key.json
+settings.ini
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
