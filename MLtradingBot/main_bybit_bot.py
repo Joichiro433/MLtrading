@@ -28,33 +28,22 @@ class DataCollector(Singleton):
     def __init__(self) -> None:
         self.api_client : ApiClient = ApiClient()
         self.feature_creator : FeatureCreator = FeatureCreator()
-        self.ohlcs_2_5m : Deque[Ohlc] = deque(maxlen=10)
-        self.ohlcs_7_5m : Deque[Ohlc] = deque(maxlen=10)
-        self.is_update_2_5m : bool = False
-        self.is_update_7_5m : bool = False
-        self.warning_counter : int = 0
+        self.ohlcs_2_5m : Deque[Ohlc] = deque(maxlen=30)
+        self.ohlcs_7_5m : Deque[Ohlc] = deque(maxlen=30)
 
     def get_df_features(self) -> pd.DataFrame:
-        logger.debug('get_df_features')
-        while (not self.is_update_2_5m) or (not self.is_update_7_5m):
-            # データが更新されるまで待機
-            time.sleep(0.5)
-            self.warning_counter += 1
-            assert self.warning_counter < 10, f'warning_counterが10に到達'
-        logger.debug('create_ohlc_dfs')
         ohlc_dfs : Dict[str, pd.DataFrame] = {
             'df_btc_15m': pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_15M, symbol='BTCUSD')]),
             'df_btc_5m':  pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_5M, symbol='BTCUSD')]),
             'df_btc_7_5m': pd.DataFrame([ohlc.__dict__ for ohlc in self.ohlcs_7_5m]),
             'df_btc_2_5m': pd.DataFrame([ohlc.__dict__ for ohlc in self.ohlcs_2_5m]),
             'df_eth_15m': pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_15M, symbol='ETHUSD')]),
-            'df_eth_5m': pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_5M, symbol='ETHUSD', num_ohlcs=10)]),
+            'df_eth_5m': pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_5M, symbol='ETHUSD', num_ohlcs=30)]),
         }
+        logger.debug('created_ohlc_dfs')
         logger.debug(ohlc_dfs['df_btc_7_5m'])
         logger.debug(ohlc_dfs['df_btc_2_5m'])
         df_features : pd.DataFrame = self.feature_creator.create_features(**ohlc_dfs)
-        self.is_update_2_5m = False
-        self.is_update_7_5m = False
         return df_features
         
     def collect_ohlcv_2_5m(self) -> None:
@@ -69,7 +58,6 @@ class DataCollector(Singleton):
                     ohlc : Ohlc = self.api_client.get_now_ohlc()
                     logger.debug(f'2.5m ohlc: {ohlc}')
                     self.ohlcs_2_5m.append(ohlc)
-                    self.is_update_2_5m = True
                     time.sleep(60 * 2)  # 2分間wait
         except Exception as e:
             logger.error(e)
@@ -86,7 +74,6 @@ class DataCollector(Singleton):
                     ohlc : Ohlc = self.api_client.get_now_ohlc()
                     logger.debug(f'7.5m ohlc: {ohlc}')
                     self.ohlcs_7_5m.append(ohlc)
-                    self.is_update_7_5m = True
                     time.sleep(60 * 7)  # 7分間wait
         except Exception as e:
             logger.error(e)
@@ -98,7 +85,7 @@ def main_trade():
         api_client : ApiClient = ApiClient()
         ml_judgement : MLJudgement = MLJudgement()
 
-        while len(data_collector.ohlcs_7_5m) <= 5:
+        while len(data_collector.ohlcs_7_5m) < 8:
             # 特徴量計算に必要なデータ数が貯まるまで待機
             time.sleep(60 * 7.5)  # 7.5分wait
         logger.debug(f'length of 2.5m ohlcs: {len(data_collector.ohlcs_2_5m)}')
@@ -106,17 +93,16 @@ def main_trade():
         logger.info('Trading start...!')
         while True:
             if datetime.now().minute % 15 == 0:
-                logger.debug('In the main while loop')
+                # 特徴量を算出
+                df_features : pd.DataFrame = data_collector.get_df_features()
+                #全注文をキャンセル
+                api_client.cancel_all_active_orders()
                 while True:
                     #有効注文がなくなるまで待機
                     orders : List[Order] = api_client.get_active_orders()
                     if len(orders) == 0:
                         break
                     time.sleep(1)
-
-                # 特徴量を算出
-                logger.debug('create features in main')
-                df_features : pd.DataFrame = data_collector.get_df_features()
                 # ML予測結果を取得
                 logger.debug('predict in main')
                 df_pred : pd.DataFrame = ml_judgement.predict(df_features=df_features)
@@ -124,11 +110,13 @@ def main_trade():
                 logger.debug('judge in main')
                 pred_buy : float = df_pred['y_pred_buy'].iloc[-1]  # pred>0: shoud trade, pred<0: should not trade
                 pred_sell : float = df_pred['y_pred_sell'].iloc[-1]  # pred>0: shoud trade, pred<0: should not trade
-                buy_price : float = utils.round_num(df_features['buy_price'].iloc[-1])
-                sell_price = utils.round_num(df_features['sell_price'].iloc[-1])
+                buy_price : float = utils.round_num(df_pred['buy_price'].iloc[-1])
+                sell_price : float = utils.round_num(df_pred['sell_price'].iloc[-1])
                 logger.info('Prediction by ML')
                 logger.info(f'pred_buy: {pred_buy}')
                 logger.info(f'pred_sell: {pred_sell}')
+                logger.debug(f'pred_buy: {buy_price}')
+                logger.debug(f'pred_sell: {sell_price}')
                 now_position : Position = api_client.get_position()
                 qty : int = 100
                 # entry

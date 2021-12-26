@@ -194,9 +194,7 @@ class ApiClient:
             (Bid, Ask) を返却
         """
         resp : requests.Response = self.client.rest.inverse.public_tickers(symbol=symbol)
-        # best_bid, best_ask = resp.json()['result'][0]['bid_price'], resp.json()['result'][0]['ask_price']
-        last_price : float = float(resp.json()['result'][0]['last_price'])
-        best_bid, best_ask = last_price+0.5, last_price-0.5
+        best_bid, best_ask = resp.json()['result'][0]['bid_price'], resp.json()['result'][0]['ask_price']
         return best_bid, best_ask
 
     def get_now_ohlc(self) -> Ohlc:
@@ -204,9 +202,10 @@ class ApiClient:
         while True:
             try:
                 now = datetime.now()
-                now = now.replace(second=round(now.second, -1), microsecond=0)
+                now = now.replace(second=round(now.second, -1), microsecond=0)  # e.g.) 32s -> 30sに丸める
                 break
             except ValueError:
+                # e.g.) 57s -> 60sとなる際のエラー。この場合、分が繰り上がるまで待機する
                 continue
         now_ohlc.timestamp = now
         return now_ohlc

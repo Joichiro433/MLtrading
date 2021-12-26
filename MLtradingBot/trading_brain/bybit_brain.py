@@ -1,4 +1,5 @@
-from typing import List, Dict, Tuple, Any
+from datetime import datetime
+from typing import List, Dict, Tuple, Any, Union
 import os
 
 import numpy as np
@@ -16,6 +17,24 @@ Model = Any
 
 
 class MLJudgement:
+    """MLによりトレードを行うべきか判断を下すクラス
+
+    Attributes
+    ----------
+    features : List[str]
+        MLに用いる特徴量
+    regression_models : Dict[str, Dict[str, Model]]
+        用いる回帰モデル key: 'buy' or 'sell'
+    classification_models : Dict[str, Dict[str, Model]]
+        用いる分類モデル key: 'buy' or 'sell'
+    blending_weights : NDArray[float]
+        Blendingの重みパラメータ
+
+    Methods
+    -------
+    predict -> pd.DataFrame
+        MLによる予測結果と、orderを出す価格を算出
+    """
     def __init__(self) -> None:
         features_btc5m : List[str] = [feature + '_btc5m' for feature in BYBIT_FINE_FEAURES]
         features_btc2_5m : List[str] = [feature + '_btc2_5m' for feature in BYBIT_FINE_FEAURES]
@@ -31,6 +50,18 @@ class MLJudgement:
         assert len(self.blending_weights) == 7, f'blending_weightsの要素数が7で無く不正. length of blendgin_weights: {self.blending_weights}'
 
     def predict(self, df_features: pd.DataFrame) -> pd.DataFrame:
+        """MLによる予測結果と、orderを出す価格を算出
+
+        Parameters
+        ----------
+        df_features : pd.DataFrame
+            特徴量をもつdf
+
+        Returns
+        -------
+        pd.DataFrame
+            MLによる予測結果と、orderを出す価格をもつdf
+        """
         X = df_features[self.features]
         buy_preds : List[NDArray[int]] = []
         sell_preds : List[NDArray[int]] = []
@@ -54,7 +85,7 @@ class MLJudgement:
         df = df_features.copy()
         # order価格
         df['buy_price'] = df['close'] - df['ATR'] * 0.5
-        df['buy_price'] = df['close'] + df['ATR'] * 0.5
+        df['sell_price'] = df['close'] + df['ATR'] * 0.5
         # Blendingで予測
         df['y_pred_buy'] = np.average(buy_preds, axis=0, weights=self.blending_weights)
         df['y_pred_sell'] = np.average(sell_preds, axis=0, weights=self.blending_weights)
@@ -85,6 +116,13 @@ class MLJudgement:
 
 
 class FeatureCreator:
+    """ohlcvの情報から特徴量を算出するクラス
+    
+    Methods
+    -------
+    create_features -> pd.DataFrame
+        特徴量を算出する
+    """
     def create_features(
             self, 
             df_btc_15m: pd.DataFrame,
@@ -94,23 +132,38 @@ class FeatureCreator:
             df_eth_15m: pd.DataFrame,
             df_eth_5m: pd.DataFrame) -> pd.DataFrame:
         # 各タイムスケールで特徴量を計算
-        df = self._calc_features(df_ohlcvs=df_btc_15m)
-        df_btc_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_5m)
-        df_btc_2_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_2_5m)
-        df_btc_7_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_7_5m)
-        df_ethf = self._calc_features(df_ohlcvs=df_eth_15m)
-        df_eth_5mf = self._calc_fine_timescale_features(df_ohlcs=df_eth_5m)
+        df = self._calc_features(df_ohlcvs=df_btc_15m).dropna()
+        logger.debug(df)
+        df_btc_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_5m).dropna()
+        logger.debug(df_btc_5mf)
+        df_btc_2_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_2_5m).dropna()
+        logger.debug(df_btc_2_5mf)
+        df_btc_7_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_7_5m).dropna()
+        logger.debug(df_btc_7_5mf)
+        df_ethf = self._calc_features(df_ohlcvs=df_eth_15m).dropna()
+        logger.debug(df_ethf)
+        df_eth_5mf = self._calc_fine_timescale_features(df_ohlcs=df_eth_5m).dropna()
+        logger.debug(df_eth_5mf)
         # 15分間隔に合わせて、dfを結合
+        logger.debug(self._get_every_15min_datas(df_btc_5mf))
         df = pd.merge(df, self._get_every_15min_datas(df_btc_5mf), on='timestamp', suffixes=['', '_btc5m'])
+        logger.debug(df)
+        logger.debug(self._get_every_15min_datas(df_btc_2_5mf))
         df = pd.merge(df, self._get_every_15min_datas(df_btc_2_5mf), on='timestamp', suffixes=['', '_btc2_5m'])
+        logger.debug(df)
+        logger.debug(self._get_every_15min_datas(df_btc_7_5mf))
         df = pd.merge(df, self._get_every_15min_datas(df_btc_7_5mf), on='timestamp', suffixes=['', '_btc7_5m'])
+        logger.debug(df)
         df = pd.merge(df, df_ethf, on='timestamp', suffixes=['', '_eth'])
+        logger.debug(df)
+        logger.debug(self._get_every_15min_datas(df_eth_5mf))
         df = pd.merge(df, self._get_every_15min_datas(df_eth_5mf), on='timestamp', suffixes=['', '_eth5m'])
+        logger.debug(df)
         df = df.set_index('timestamp')
 
         df_features = df.dropna()
         logger.info('Created features')
-        logger.info(df_features[['timestamp', 'open', 'high', 'low', 'close']].tail(2))
+        logger.info(df_features[['open', 'high', 'low', 'close']].tail(2))
         logger.debug(f'length of df_feature: {len(df_features)}')
         logger.debug(df_features)
         return df_features
@@ -275,7 +328,9 @@ class FeatureCreator:
     def _get_every_15min_datas(self, df: pd.DataFrame) -> pd.DataFrame:
         """15分ごとのにデータを整形する"""
 
-        def parse_to_minute(timestamp):
+        def parse_to_minute(timestamp: Union[np.datetime64, datetime]) -> int:
+            if isinstance(timestamp, np.datetime64):
+                timestamp : datetime = timestamp.astype('M8[s]').astype('O')  # numpy.datetime64 -> datetime.datetimeにキャスト
             return timestamp.minute
 
         df = df.copy()
