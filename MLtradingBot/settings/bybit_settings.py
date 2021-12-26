@@ -14,3 +14,4 @@ testnet_api_key = conf['bybit']['testnet_api_key']
 tesetnet_api_secret_key = conf['bybit']['tesetnet_api_secret_key']
 
 symbol = conf['bybit']['symbol']
+leverage = float(conf['bybit']['leverage'])

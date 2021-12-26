@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 
 import constants
+from settings import bybit_settings as settings
 from utils import utils
 from trading_api.bybit_api import ApiClient, Ohlc, Order, Position
 from trading_brain.bybit_brain import FeatureCreator, MLJudgement
@@ -107,9 +108,9 @@ def main_trade():
                 logger.info(f'buy_price: {buy_price}')
                 logger.info(f'sell_price: {sell_price}')
                 now_position : Position = api_client.get_position()
-                qty : int = 100
                 # entry
                 if now_position.side == constants.NONE:
+                    qty : int = int(api_client.get_available_qty() * settings.leverage * 0.95)
                     if pred_buy > 0:
                         order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=qty, price=buy_price)
                         logger.info(f'Create entry order!: {order}')

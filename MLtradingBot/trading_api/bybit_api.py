@@ -184,6 +184,20 @@ class ApiClient:
         resp : requests.Response = self.client.rest.inverse.private_wallet_balance(coin=coin)
         wallet_balance : float = resp.json()["result"][f"{coin}"]["available_balance"]
         return wallet_balance
+    
+    def get_available_qty(self) -> int:
+        """購入可能なUSD残高を返却
+
+        Returns
+        -------
+        int
+            購入可能なUSD残高
+        """
+        now_ohlc: Ohlc = self.get_ohlcs(num_ohlcs=1)[0]
+        wallet_btc_balance : float = self.get_available_balance()
+        now_close : float = now_ohlc.close  # 現在の1BTC当たりのUSD [BTC/USD]
+        available_usd_qty : int = int(wallet_btc_balance / (1/now_close))
+        return available_usd_qty
 
     def get_bid_ask(self) -> Tuple[float, float]:
         """現在のBid(売値), Ask(買値)を取得する
