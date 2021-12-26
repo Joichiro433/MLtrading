@@ -133,39 +133,22 @@ class FeatureCreator:
             df_eth_5m: pd.DataFrame) -> pd.DataFrame:
         # 各タイムスケールで特徴量を計算
         df = self._calc_features(df_ohlcvs=df_btc_15m).dropna()
-        logger.debug(df)
         df_btc_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_5m).dropna()
-        logger.debug(df_btc_5mf)
         df_btc_2_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_2_5m).dropna()
-        logger.debug(df_btc_2_5mf)
         df_btc_7_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_7_5m).dropna()
-        logger.debug(df_btc_7_5mf)
         df_ethf = self._calc_features(df_ohlcvs=df_eth_15m).dropna()
-        logger.debug(df_ethf)
         df_eth_5mf = self._calc_fine_timescale_features(df_ohlcs=df_eth_5m).dropna()
-        logger.debug(df_eth_5mf)
         # 15分間隔に合わせて、dfを結合
-        logger.debug(self._get_every_15min_datas(df_btc_5mf))
         df = pd.merge(df, self._get_every_15min_datas(df_btc_5mf), on='timestamp', suffixes=['', '_btc5m'])
-        logger.debug(df)
-        logger.debug(self._get_every_15min_datas(df_btc_2_5mf))
         df = pd.merge(df, self._get_every_15min_datas(df_btc_2_5mf), on='timestamp', suffixes=['', '_btc2_5m'])
-        logger.debug(df)
-        logger.debug(self._get_every_15min_datas(df_btc_7_5mf))
         df = pd.merge(df, self._get_every_15min_datas(df_btc_7_5mf), on='timestamp', suffixes=['', '_btc7_5m'])
-        logger.debug(df)
         df = pd.merge(df, df_ethf, on='timestamp', suffixes=['', '_eth'])
-        logger.debug(df)
-        logger.debug(self._get_every_15min_datas(df_eth_5mf))
         df = pd.merge(df, self._get_every_15min_datas(df_eth_5mf), on='timestamp', suffixes=['', '_eth5m'])
-        logger.debug(df)
         df = df.set_index('timestamp')
 
         df_features = df.dropna()
         logger.info('Created features')
         logger.info(df_features[['open', 'high', 'low', 'close']].tail(2))
-        logger.debug(f'length of df_feature: {len(df_features)}')
-        logger.debug(df_features)
         return df_features
 
     def _calc_features(self, df_ohlcvs: pd.DataFrame) -> pd.DataFrame:

@@ -40,23 +40,18 @@ class DataCollector(Singleton):
             'df_eth_15m': pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_15M, symbol='ETHUSD')]),
             'df_eth_5m': pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_5M, symbol='ETHUSD', num_ohlcs=30)]),
         }
-        logger.debug('created_ohlc_dfs')
-        logger.debug(ohlc_dfs['df_btc_7_5m'])
-        logger.debug(ohlc_dfs['df_btc_2_5m'])
         df_features : pd.DataFrame = self.feature_creator.create_features(**ohlc_dfs)
         return df_features
         
     def collect_ohlcv_2_5m(self) -> None:
         try:
-            logger.debug('collect_ohlcv_2_5m')
             while True:
                 minute : int = datetime.now().minute
                 second : int = datetime.now().second
                 minute_time = minute + (second/60)
                 if minute_time % 2.5 == 0:
-                    logger.debug('collect 2.5m ohlc')
                     ohlc : Ohlc = self.api_client.get_now_ohlc()
-                    logger.debug(f'2.5m ohlc: {ohlc}')
+                    logger.info(f'2.5m ohlc: {ohlc}')
                     self.ohlcs_2_5m.append(ohlc)
                     time.sleep(60 * 2)  # 2分間wait
         except Exception as e:
@@ -64,15 +59,13 @@ class DataCollector(Singleton):
 
     def collect_ohlcv_7_5m(self) -> None:
         try:
-            logger.debug('collect_ohlcv_7_5m')
             while True:
                 minute : int = datetime.now().minute
                 second : int = datetime.now().second
                 minute_time = minute + (second/60)
                 if minute_time % 7.5 == 0:
-                    logger.debug('collect 7.5m ohlc')
                     ohlc : Ohlc = self.api_client.get_now_ohlc()
-                    logger.debug(f'7.5m ohlc: {ohlc}')
+                    logger.info(f'7.5m ohlc: {ohlc}')
                     self.ohlcs_7_5m.append(ohlc)
                     time.sleep(60 * 7)  # 7分間wait
         except Exception as e:
@@ -88,8 +81,6 @@ def main_trade():
         while len(data_collector.ohlcs_7_5m) < 8:
             # 特徴量計算に必要なデータ数が貯まるまで待機
             time.sleep(60 * 7.5)  # 7.5分wait
-        logger.debug(f'length of 2.5m ohlcs: {len(data_collector.ohlcs_2_5m)}')
-        logger.debug(f'length of 7.5m ohlcs: {len(data_collector.ohlcs_7_5m)}')
         logger.info('Trading start...!')
         while True:
             if datetime.now().minute % 15 == 0:
@@ -104,10 +95,8 @@ def main_trade():
                         break
                     time.sleep(1)
                 # ML予測結果を取得
-                logger.debug('predict in main')
                 df_pred : pd.DataFrame = ml_judgement.predict(df_features=df_features)
 
-                logger.debug('judge in main')
                 pred_buy : float = df_pred['y_pred_buy'].iloc[-1]  # pred>0: shoud trade, pred<0: should not trade
                 pred_sell : float = df_pred['y_pred_sell'].iloc[-1]  # pred>0: shoud trade, pred<0: should not trade
                 buy_price : float = utils.round_num(df_pred['buy_price'].iloc[-1])
@@ -115,8 +104,8 @@ def main_trade():
                 logger.info('Prediction by ML')
                 logger.info(f'pred_buy: {pred_buy}')
                 logger.info(f'pred_sell: {pred_sell}')
-                logger.debug(f'pred_buy: {buy_price}')
-                logger.debug(f'pred_sell: {sell_price}')
+                logger.info(f'buy_price: {buy_price}')
+                logger.info(f'sell_price: {sell_price}')
                 now_position : Position = api_client.get_position()
                 qty : int = 100
                 # entry
