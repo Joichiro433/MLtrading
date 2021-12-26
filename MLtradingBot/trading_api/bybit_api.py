@@ -200,17 +200,15 @@ class ApiClient:
         return best_bid, best_ask
 
     def get_now_ohlc(self) -> Ohlc:
-        num_error = 0
+        now_ohlc: Ohlc = self.get_ohlcs(num_ohlcs=1)[0]
         while True:
             try:
-                now_ohlc: Ohlc = self.get_ohlcs(num_ohlcs=1)[0]
+                now = datetime.now()
+                now = now.replace(second=round(now.second, -1), microsecond=0)
                 break
-            except IndexError as e:
-                logger.error(e)
-                if num_error > 5:
-                    sys.exit()
-                num_error += 1
-                time.sleep(5)
+            except ValueError:
+                continue
+        now_ohlc.timestamp = now
         return now_ohlc
 
     def get_ohlcs(

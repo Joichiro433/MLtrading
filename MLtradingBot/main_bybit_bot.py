@@ -35,12 +35,13 @@ class DataCollector(Singleton):
         self.warning_counter : int = 0
 
     def get_df_features(self) -> pd.DataFrame:
+        logger.debug('get_df_features')
         while (not self.is_update_2_5m) or (not self.is_update_7_5m):
             # データが更新されるまで待機
             time.sleep(0.5)
             self.warning_counter += 1
             assert self.warning_counter < 10, f'warning_counterが10に到達'
-        
+        logger.debug('create_ohlc_dfs')
         ohlc_dfs : Dict[str, pd.DataFrame] = {
             'df_btc_15m': pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_15M, symbol='BTCUSD')]),
             'df_btc_5m':  pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_5M, symbol='BTCUSD')]),
@@ -57,83 +58,104 @@ class DataCollector(Singleton):
         return df_features
         
     def collect_ohlcv_2_5m(self) -> None:
-        while True:
-            minute : int = datetime.now().minute
-            second : int = datetime.now().second
-            minute_time = minute + (second/60)
-            if minute_time % 2.5 == 0:
-                ohlc : Ohlc = self.api_client.get_now_ohlc()
-                self.ohlcs_2_5m.append(ohlc)
-                self.is_update_2_5m = True
-                time.sleep(60 * 2)  # 2分間wait
+        try:
+            logger.debug('collect_ohlcv_2_5m')
+            while True:
+                minute : int = datetime.now().minute
+                second : int = datetime.now().second
+                minute_time = minute + (second/60)
+                if minute_time % 2.5 == 0:
+                    logger.debug('collect 2.5m ohlc')
+                    ohlc : Ohlc = self.api_client.get_now_ohlc()
+                    logger.debug(f'2.5m ohlc: {ohlc}')
+                    self.ohlcs_2_5m.append(ohlc)
+                    self.is_update_2_5m = True
+                    time.sleep(60 * 2)  # 2分間wait
+        except Exception as e:
+            logger.error(e)
 
     def collect_ohlcv_7_5m(self) -> None:
-        while True:
-            minute : int = datetime.now().minute
-            second : int = datetime.now().second
-            minute_time = minute + (second/60)
-            if minute_time % 7.5 == 0:
-                ohlc : Ohlc = self.api_client.get_now_ohlc()
-                self.ohlcs_7_5m.append(ohlc)
-                self.is_update_7_5m = True
-                time.sleep(60 * 7)  # 7分間wait
+        try:
+            logger.debug('collect_ohlcv_7_5m')
+            while True:
+                minute : int = datetime.now().minute
+                second : int = datetime.now().second
+                minute_time = minute + (second/60)
+                if minute_time % 7.5 == 0:
+                    logger.debug('collect 7.5m ohlc')
+                    ohlc : Ohlc = self.api_client.get_now_ohlc()
+                    logger.debug(f'7.5m ohlc: {ohlc}')
+                    self.ohlcs_7_5m.append(ohlc)
+                    self.is_update_7_5m = True
+                    time.sleep(60 * 7)  # 7分間wait
+        except Exception as e:
+            logger.error(e)
 
 
 def main_trade():
-    data_collector : DataCollector = DataCollector()
-    api_client : ApiClient = ApiClient()
-    ml_judgement : MLJudgement = MLJudgement()
+    try:
+        data_collector : DataCollector = DataCollector()
+        api_client : ApiClient = ApiClient()
+        ml_judgement : MLJudgement = MLJudgement()
 
-    while len(data_collector.ohlcs_7_5m) <= 5:
-        # 特徴量計算に必要なデータ数が貯まるまで待機
-        time.sleep(60 * 7.5)  # 7.5分wait
-    logger.info('Trading start...!')
-    while True:
-        if datetime.now().minute % 15 == 0:
-            while True:
-                #有効注文がなくなるまで待機
-                orders : List[Order] = api_client.get_active_orders()
-                if len(orders) == 0:
-                    break
-                time.sleep(1)
+        while len(data_collector.ohlcs_7_5m) <= 5:
+            # 特徴量計算に必要なデータ数が貯まるまで待機
+            time.sleep(60 * 7.5)  # 7.5分wait
+        logger.debug(f'length of 2.5m ohlcs: {len(data_collector.ohlcs_2_5m)}')
+        logger.debug(f'length of 7.5m ohlcs: {len(data_collector.ohlcs_7_5m)}')
+        logger.info('Trading start...!')
+        while True:
+            if datetime.now().minute % 15 == 0:
+                logger.debug('In the main while loop')
+                while True:
+                    #有効注文がなくなるまで待機
+                    orders : List[Order] = api_client.get_active_orders()
+                    if len(orders) == 0:
+                        break
+                    time.sleep(1)
 
-            # 特徴量を算出
-            df_features : pd.DataFrame = data_collector.get_df_features()
-            # ML予測結果を取得
-            df_pred : pd.DataFrame = ml_judgement.predict(df_features=df_features)
+                # 特徴量を算出
+                logger.debug('create features in main')
+                df_features : pd.DataFrame = data_collector.get_df_features()
+                # ML予測結果を取得
+                logger.debug('predict in main')
+                df_pred : pd.DataFrame = ml_judgement.predict(df_features=df_features)
 
-            pred_buy : float = df_pred['y_pred_buy'].iloc[-1]  # pred>0: shoud trade, pred<0: should not trade
-            pred_sell : float = df_pred['y_pred_sell'].iloc[-1]  # pred>0: shoud trade, pred<0: should not trade
-            buy_price : float = utils.round_num(df_features['buy_price'].iloc[-1])
-            sell_price = utils.round_num(df_features['sell_price'].iloc[-1])
-            logger.info('Prediction by ML')
-            logger.info(f'pred_buy: {pred_buy}')
-            logger.info(f'pred_sell: {pred_sell}')
-            now_position : Position = api_client.get_position()
-            qty : int = 100
-            # entry
-            if now_position.side == constants.NONE:
-                if pred_buy > 0:
-                    order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=qty, price=buy_price)
-                    logger.info(f'Create entry order!: {order}')
-                    api_client.create_order(order=order)
-                if pred_sell > 0:
-                    order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=qty, price=sell_price)
-                    logger.info(f'Create entry order!: {order}')
-                    api_client.create_order(order=order)
-            # exit
-            elif now_position.side == constants.BUY:
-                if not (pred_sell < 0 and pred_buy > 0):  # ML予測が、「価格がまだ上がる」場合は保留
-                    order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=now_position.size, price=sell_price)
-                    logger.info(f'Create exit order!: {order}')
-                    api_client.create_order(order=order)
-            elif now_position == constants.SELL:
-                if not (pred_buy < 0 and pred_sell > 0):  # ML予測が、「価格がまだ下がる」場合は保留
-                    order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=now_position.size, price=buy_price)
-                    logger.info(f'Create exit order!: {order}')
-                    api_client.create_order(order=order)
+                logger.debug('judge in main')
+                pred_buy : float = df_pred['y_pred_buy'].iloc[-1]  # pred>0: shoud trade, pred<0: should not trade
+                pred_sell : float = df_pred['y_pred_sell'].iloc[-1]  # pred>0: shoud trade, pred<0: should not trade
+                buy_price : float = utils.round_num(df_features['buy_price'].iloc[-1])
+                sell_price = utils.round_num(df_features['sell_price'].iloc[-1])
+                logger.info('Prediction by ML')
+                logger.info(f'pred_buy: {pred_buy}')
+                logger.info(f'pred_sell: {pred_sell}')
+                now_position : Position = api_client.get_position()
+                qty : int = 100
+                # entry
+                if now_position.side == constants.NONE:
+                    if pred_buy > 0:
+                        order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=qty, price=buy_price)
+                        logger.info(f'Create entry order!: {order}')
+                        api_client.create_order(order=order)
+                    if pred_sell > 0:
+                        order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=qty, price=sell_price)
+                        logger.info(f'Create entry order!: {order}')
+                        api_client.create_order(order=order)
+                # exit
+                elif now_position.side == constants.BUY:
+                    if not (pred_sell < 0 and pred_buy > 0):  # ML予測が、「価格がまだ上がる」場合は保留
+                        order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=now_position.size, price=sell_price)
+                        logger.info(f'Create exit order!: {order}')
+                        api_client.create_order(order=order)
+                elif now_position == constants.SELL:
+                    if not (pred_buy < 0 and pred_sell > 0):  # ML予測が、「価格がまだ下がる」場合は保留
+                        order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=now_position.size, price=buy_price)
+                        logger.info(f'Create exit order!: {order}')
+                        api_client.create_order(order=order)
 
-            time.sleep(60 * 14)  # 14分wait
+                time.sleep(60 * 14)  # 14分wait
+    except Exception as e:
+        logger.error(e)
 
 
 if __name__ == '__main__':

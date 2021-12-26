@@ -95,11 +95,11 @@ class FeatureCreator:
             df_eth_5m: pd.DataFrame) -> pd.DataFrame:
         # 各タイムスケールで特徴量を計算
         df = self._calc_features(df_ohlcvs=df_btc_15m)
-        df_btc_5mf = self._calc_fine_timescale_features(df_ohlcvs=df_btc_5m)
-        df_btc_2_5mf = self._calc_fine_timescale_features(df_ohlcvs=df_btc_2_5m)
-        df_btc_7_5mf = self._calc_fine_timescale_features(df_ohlcvs=df_btc_7_5m)
+        df_btc_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_5m)
+        df_btc_2_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_2_5m)
+        df_btc_7_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_7_5m)
         df_ethf = self._calc_features(df_ohlcvs=df_eth_15m)
-        df_eth_5mf = self._calc_fine_timescale_features(df_ohlcvs=df_eth_5m)
+        df_eth_5mf = self._calc_fine_timescale_features(df_ohlcs=df_eth_5m)
         # 15分間隔に合わせて、dfを結合
         df = pd.merge(df, self._get_every_15min_datas(df_btc_5mf), on='timestamp', suffixes=['', '_btc5m'])
         df = pd.merge(df, self._get_every_15min_datas(df_btc_2_5mf), on='timestamp', suffixes=['', '_btc2_5m'])
@@ -108,9 +108,11 @@ class FeatureCreator:
         df = pd.merge(df, self._get_every_15min_datas(df_eth_5mf), on='timestamp', suffixes=['', '_eth5m'])
         df = df.set_index('timestamp')
 
-        logger.info('Created features')
-        logger.info(df[['timestamp', 'open', 'high', 'low', 'close']].tail(2))
         df_features = df.dropna()
+        logger.info('Created features')
+        logger.info(df_features[['timestamp', 'open', 'high', 'low', 'close']].tail(2))
+        logger.debug(f'length of df_feature: {len(df_features)}')
+        logger.debug(df_features)
         return df_features
 
     def _calc_features(self, df_ohlcvs: pd.DataFrame) -> pd.DataFrame:
@@ -221,7 +223,7 @@ class FeatureCreator:
 
         return df
 
-    def _up_hige_size(df: pd.DataFrame) -> NDArray[float]:
+    def _up_hige_size(self, df: pd.DataFrame) -> NDArray[float]:
         """上ヒゲの大きさ"""
         df = df.copy()
         uphige = np.zeros(len(df))
@@ -245,7 +247,7 @@ class FeatureCreator:
         uphige = uphige / close
         return uphige
 
-    def _down_hige_size(df: pd.DataFrame) -> NDArray[float]:
+    def _down_hige_size(self, df: pd.DataFrame) -> NDArray[float]:
         """下ヒゲの大きさ"""
         df = df.copy()
         downhige = np.zeros(len(df))
@@ -270,7 +272,7 @@ class FeatureCreator:
         downhige = downhige/close
         return downhige
 
-    def _get_every_15min_datas(df: pd.DataFrame) -> pd.DataFrame:
+    def _get_every_15min_datas(self, df: pd.DataFrame) -> pd.DataFrame:
         """15分ごとのにデータを整形する"""
 
         def parse_to_minute(timestamp):
