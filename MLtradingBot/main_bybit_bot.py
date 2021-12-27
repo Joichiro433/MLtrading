@@ -108,8 +108,10 @@ def main_trade():
                 logger.info(f'buy_price: {buy_price}')
                 logger.info(f'sell_price: {sell_price}')
                 now_position : Position = api_client.get_position()
+                logger.info(f'Now position: {now_position}')
                 # entry
                 if now_position.side == constants.NONE:
+                    logger.info('Entry!')
                     qty : int = int(api_client.get_available_qty() * settings.leverage * 0.95)
                     if pred_buy > 0:
                         order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=qty, price=buy_price)
@@ -121,11 +123,13 @@ def main_trade():
                         api_client.create_order(order=order)
                 # exit
                 elif now_position.side == constants.BUY:
+                    logger.info('Exit buy position!')
                     if not (pred_sell < 0 and pred_buy > 0):  # ML予測が、「価格がまだ上がる」場合は保留
                         order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=now_position.size, price=sell_price)
                         logger.info(f'Create exit order!: {order}')
                         api_client.create_order(order=order)
-                elif now_position == constants.SELL:
+                elif now_position.side == constants.SELL:
+                    logger.info('Exit sell position!')
                     if not (pred_buy < 0 and pred_sell > 0):  # ML予測が、「価格がまだ下がる」場合は保留
                         order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=now_position.size, price=buy_price)
                         logger.info(f'Create exit order!: {order}')
