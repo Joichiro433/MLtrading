@@ -1,6 +1,6 @@
 
 DURATION_1M = '1'
-# DURATION_3M = '3'
+DURATION_3M = '3'
 DURATION_5M = '5'
 DURATION_15M = '15'
 DURATION_30M = '30'
@@ -22,8 +22,6 @@ MARKET = 'Market'
 STOP = 'Stop'
 
 NUMBER_OF_OHLCS = 1000
-UPDATE_INTERVAL = 20
-
 
 
 BYBIT_FEAURES = sorted([
@@ -57,12 +55,12 @@ BYBIT_FEAURES = sorted([
     'HT_DCPHASE',
     'HT_PHASOR_inphase',
     'HT_PHASOR_quadrature',
-    'HT_TRENDMODE',
+    # 'HT_TRENDMODE',
     'BETA',
     'LINEARREG',
     'LINEARREG_ANGLE',
-    'LINEARREG_INTERCEPT',
-    'LINEARREG_SLOPE',
+    # 'LINEARREG_INTERCEPT',
+    # 'LINEARREG_SLOPE',
     'STDDEV',
     'BBANDS_upperband',
     'BBANDS_middleband',
@@ -102,18 +100,4 @@ BYBIT_FEAURES = sorted([
     'heikin_op_std15',
     'heikin_cl_std25',
     'heikin_op_std25',
-])
-
-BYBIT_FINE_FEAURES = sorted([
-    'pct',
-    'pct_mean5',
-    'pct_std5',
-    'uphige_size',
-    'downhige_size',
-    'heikin_cl',
-    'heikin_op',
-    'heikin_cl_mean5',
-    'heikin_op_mean5',
-    'heikin_cl_std5',
-    'heikin_op_std5',
 ])

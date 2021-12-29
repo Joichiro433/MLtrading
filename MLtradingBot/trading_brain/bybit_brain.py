@@ -84,8 +84,8 @@ class MLJudgement:
         
         df = df_features.copy()
         # order価格
-        df['buy_price'] = df['close'] - df['ATR'] * 0.5
-        df['sell_price'] = df['close'] + df['ATR'] * 0.5
+        df['buy_price'] = df['close'] - df['ATR'] * 0.36
+        df['sell_price'] = df['close'] + df['ATR'] * 0.36
         # Blendingで予測
         df['y_pred_buy'] = np.average(buy_preds, axis=0, weights=self.blending_weights)
         df['y_pred_sell'] = np.average(sell_preds, axis=0, weights=self.blending_weights)
@@ -127,21 +127,18 @@ class FeatureCreator:
             self, 
             df_btc_15m: pd.DataFrame,
             df_btc_5m: pd.DataFrame,
-            df_btc_7_5m: pd.DataFrame,
-            df_btc_2_5m: pd.DataFrame,
+            df_btc_3m: pd.DataFrame,
             df_eth_15m: pd.DataFrame,
             df_eth_5m: pd.DataFrame) -> pd.DataFrame:
         # 各タイムスケールで特徴量を計算
         df = self._calc_features(df_ohlcvs=df_btc_15m).dropna()
-        df_btc_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_5m).dropna()
-        df_btc_2_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_2_5m).dropna()
-        df_btc_7_5mf = self._calc_fine_timescale_features(df_ohlcs=df_btc_7_5m).dropna()
+        df_btc_5mf = self._calc_features(df_ohlcvs=df_btc_5m).dropna()
+        df_btc_3mf = self._calc_features(df_ohlcvs=df_btc_3m).dropna()
         df_ethf = self._calc_features(df_ohlcvs=df_eth_15m).dropna()
-        df_eth_5mf = self._calc_fine_timescale_features(df_ohlcs=df_eth_5m).dropna()
+        df_eth_5mf = self._calc_features(df_ohlcvs=df_eth_5m).dropna()
         # 15分間隔に合わせて、dfを結合
         df = pd.merge(df, self._get_every_15min_datas(df_btc_5mf), on='timestamp', suffixes=['', '_btc5m'])
-        df = pd.merge(df, self._get_every_15min_datas(df_btc_2_5mf), on='timestamp', suffixes=['', '_btc2_5m'])
-        df = pd.merge(df, self._get_every_15min_datas(df_btc_7_5mf), on='timestamp', suffixes=['', '_btc7_5m'])
+        df = pd.merge(df, self._get_every_15min_datas(df_btc_3mf), on='timestamp', suffixes=['', '_btc3m'])
         df = pd.merge(df, df_ethf, on='timestamp', suffixes=['', '_eth'])
         df = pd.merge(df, self._get_every_15min_datas(df_eth_5mf), on='timestamp', suffixes=['', '_eth5m'])
         df = df.set_index('timestamp')
@@ -236,26 +233,6 @@ class FeatureCreator:
             df[f'heikin_cl_std{span}'] = df['heikin_cl'].rolling(span).std()
             df[f'heikin_op_mean{span}'] = df['heikin_op'].rolling(span).mean()
             df[f'heikin_op_std{span}'] = df['heikin_op'].rolling(span).std()
-
-        return df
-
-    def _calc_fine_timescale_features(self, df_ohlcs: pd.DataFrame) -> pd.DataFrame:
-        df = df_ohlcs.copy()
-
-        df['pct'] = df['close'].pct_change()  # 変化率
-        df['pct_mean5']= df['pct'].rolling(5).std()  # 変化率の平均
-        df['pct_std5']= df['pct'].rolling(5).std()  # 変化率の偏差
-        
-        df['uphige_size'] = self._up_hige_size(df)
-        df['downhige_size'] = self._down_hige_size(df)
-
-        # 平均足を使った戦略: https://note.com/btcml/n/n6198a3714fe5
-        df['heikin_cl'] = 0.25 * (df['open'] + df['high'] + df['low'] + df['close'])
-        df['heikin_op'] = df['heikin_cl'].ewm(1, adjust=False).mean().shift(1)
-        df['heikin_cl_mean5'] = df['heikin_cl'].rolling(5).mean()
-        df['heikin_cl_std5'] = df['heikin_cl'].rolling(5).std()
-        df['heikin_op_mean5'] = df['heikin_op'].rolling(5).mean()
-        df['heikin_op_std5'] = df['heikin_op'].rolling(5).std()
 
         return df
 
