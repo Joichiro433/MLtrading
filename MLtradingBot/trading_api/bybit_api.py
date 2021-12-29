@@ -1,3 +1,4 @@
+from logging import warning
 from typing import Dict, List, Union, Tuple
 import time
 from datetime import datetime, timedelta
@@ -193,7 +194,7 @@ class ApiClient:
         int
             購入可能なUSD残高
         """
-        now_ohlc: Ohlc = self.get_ohlcs(num_ohlcs=1)[0]
+        now_ohlc : Ohlc = self.get_now_ohlc()
         wallet_btc_balance : float = self.get_available_balance()
         now_close : float = now_ohlc.close  # 現在の1BTC当たりのUSD [BTC/USD]
         available_usd_qty : int = int(wallet_btc_balance / (1/now_close))
@@ -212,7 +213,13 @@ class ApiClient:
         return best_bid, best_ask
 
     def get_now_ohlc(self) -> Ohlc:
-        now_ohlc: Ohlc = self.get_ohlcs(num_ohlcs=1)[0]
+        while True:
+            try:
+                now_ohlc: Ohlc = self.get_ohlcs(num_ohlcs=1)[0]
+                break
+            except IndexError as e:
+                logger.warn(e)
+                time.sleep(1)
         while True:
             try:
                 now = datetime.now()

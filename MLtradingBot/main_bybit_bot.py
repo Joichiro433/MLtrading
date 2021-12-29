@@ -79,7 +79,7 @@ def main_trade():
         api_client : ApiClient = ApiClient()
         ml_judgement : MLJudgement = MLJudgement()
 
-        while len(data_collector.ohlcs_7_5m) < 8:
+        while len(data_collector.ohlcs_7_5m) < 7:
             # 特徴量計算に必要なデータ数が貯まるまで待機
             time.sleep(60 * 7.5)  # 7.5分wait
         logger.info('Trading start...!')
@@ -113,24 +113,24 @@ def main_trade():
                 if now_position.side == constants.NONE:
                     logger.info('Entry!')
                     qty : int = int(api_client.get_available_qty() * settings.leverage * 0.95)
-                    if pred_buy > 0:
+                    if (pred_buy > 0) and (pred_buy > pred_sell):
                         order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=qty, price=buy_price)
                         logger.info(f'Create entry order!: {order}')
                         api_client.create_order(order=order)
-                    if pred_sell > 0:
+                    elif (pred_sell > 0) and (pred_sell > pred_buy):
                         order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=qty, price=sell_price)
                         logger.info(f'Create entry order!: {order}')
                         api_client.create_order(order=order)
                 # exit
                 elif now_position.side == constants.BUY:
                     logger.info('Exit buy position!')
-                    if not (pred_sell < 0 and pred_buy > 0):  # ML予測が、「価格がまだ上がる」場合は保留
+                    if not (pred_sell < 0 and pred_buy > 0.5):  # ML予測が、「価格がまだ上がる」場合は保留
                         order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=now_position.size, price=sell_price)
                         logger.info(f'Create exit order!: {order}')
                         api_client.create_order(order=order)
                 elif now_position.side == constants.SELL:
                     logger.info('Exit sell position!')
-                    if not (pred_buy < 0 and pred_sell > 0):  # ML予測が、「価格がまだ下がる」場合は保留
+                    if not (pred_buy < 0 and pred_sell > 0.5):  # ML予測が、「価格がまだ下がる」場合は保留
                         order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=now_position.size, price=buy_price)
                         logger.info(f'Create exit order!: {order}')
                         api_client.create_order(order=order)
