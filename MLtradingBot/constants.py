@@ -21,7 +21,7 @@ LIMIT = 'Limit'
 MARKET = 'Market'
 STOP = 'Stop'
 
-NUMBER_OF_OHLCS = 1000
+NUMBER_OF_OHLCS = 2000
 
 
 BYBIT_FEAURES = sorted([
@@ -100,4 +100,7 @@ BYBIT_FEAURES = sorted([
     'heikin_op_std15',
     'heikin_cl_std25',
     'heikin_op_std25',
+    'up_down',
 ])
+
+BYBIT_FEAURES = BYBIT_FEAURES + [f'up_down_{i}' for i in range(1, 40)]

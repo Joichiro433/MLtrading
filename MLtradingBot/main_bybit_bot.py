@@ -31,10 +31,6 @@ class DataCollector(Singleton):
     def get_df_features(self) -> pd.DataFrame:
         ohlc_dfs : Dict[str, pd.DataFrame] = {
             'df_btc_15m': pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_15M, symbol='BTCUSD')]),
-            'df_btc_5m':  pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_5M, symbol='BTCUSD')]),
-            'df_btc_3m': pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_3M, symbol='BTCUSD')]),
-            'df_eth_15m': pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_15M, symbol='ETHUSD')]),
-            'df_eth_5m': pd.DataFrame([ohlc.__dict__ for ohlc in self.api_client.get_ohlcs(time_interval=constants.DURATION_5M, symbol='ETHUSD')]),
         }
         df_features : pd.DataFrame = self.feature_creator.create_features(**ohlc_dfs)
         return df_features
@@ -59,13 +55,10 @@ def main_trade():
         # ML予測結果を取得
         df_pred : pd.DataFrame = ml_judgement.predict(df_features=df_features)
 
-        pred_buy : float = df_pred['y_pred_buy'].iloc[-1]  # pred>0: shoud trade, pred<0: should not trade
-        pred_sell : float = df_pred['y_pred_sell'].iloc[-1]  # pred>0: shoud trade, pred<0: should not trade
-        buy_price : float = utils.round_num(df_pred['buy_price'].iloc[-1])
-        sell_price : float = utils.round_num(df_pred['sell_price'].iloc[-1])
+        y_pred : float = df_pred['y_pred'].iloc[-1]  # pred>0: shoud buy, pred<0: should sell
+        sell_price, buy_price = api_client.get_bid_ask()
         logger.info('Prediction by ML')
-        logger.info(f'pred_buy: {pred_buy}')
-        logger.info(f'pred_sell: {pred_sell}')
+        logger.info(f'y_pred: {y_pred}')
         logger.info(f'buy_price: {buy_price}')
         logger.info(f'sell_price: {sell_price}')
         now_position : Position = api_client.get_position()
@@ -74,25 +67,27 @@ def main_trade():
         if now_position.side == constants.NONE:
             logger.info('Entry!')
             qty : int = int(api_client.get_available_qty() * settings.leverage * 0.95)
-            if (pred_buy > 0) and (pred_buy > pred_sell):
+            if y_pred > 0:  # Buy
                 order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=qty, price=buy_price)
                 logger.info(f'Create entry order!: {order}')
                 api_client.create_order(order=order)
-            elif (pred_sell > 0) and (pred_sell > pred_buy):
+            elif y_pred < 0:  # Sell
                 order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=qty, price=sell_price)
                 logger.info(f'Create entry order!: {order}')
                 api_client.create_order(order=order)
         # exit
         elif now_position.side == constants.BUY:
             logger.info('Exit buy position!')
-            order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=now_position.size, price=sell_price)
-            logger.info(f'Create exit order!: {order}')
-            api_client.create_order(order=order)
+            if y_pred < 0:
+                order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=now_position.size, price=sell_price)
+                logger.info(f'Create exit order!: {order}')
+                api_client.create_order(order=order)
         elif now_position.side == constants.SELL:
             logger.info('Exit sell position!')
-            order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=now_position.size, price=buy_price)
-            logger.info(f'Create exit order!: {order}')
-            api_client.create_order(order=order)
+            if y_pred > 0:
+                order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=now_position.size, price=buy_price)
+                logger.info(f'Create exit order!: {order}')
+                api_client.create_order(order=order)
 
         time.sleep(60 * 14)  # 14分wait
 

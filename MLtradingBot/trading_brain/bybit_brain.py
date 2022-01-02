@@ -8,7 +8,7 @@ from nptyping import NDArray
 import joblib
 import talib
 
-from constants import BYBIT_FEAURES, BYBIT_FINE_FEAURES
+from constants import BYBIT_FEAURES
 from logger import Logger
 
 logger = Logger()
@@ -36,18 +36,10 @@ class MLJudgement:
         MLによる予測結果と、orderを出す価格を算出
     """
     def __init__(self) -> None:
-        features_btc5m : List[str] = [feature + '_btc5m' for feature in BYBIT_FINE_FEAURES]
-        features_btc2_5m : List[str] = [feature + '_btc2_5m' for feature in BYBIT_FINE_FEAURES]
-        features_btc7_5m : List[str] = [feature + '_btc7_5m' for feature in BYBIT_FINE_FEAURES]
-        features_eth : List[str] = [feature + '_eth' for feature in BYBIT_FEAURES]
-        features_eth5m : List[str] = [feature + '_eth5m' for feature in BYBIT_FINE_FEAURES]
-        self.features : List[str] = BYBIT_FEAURES + features_btc5m + features_btc2_5m + features_btc7_5m + features_eth + features_eth5m  # 使用する特徴量
-        self.models_dir_path : str = os.path.join('trained_models', 'bybit')
-        self.regression_model_names : List[str] = ['gbdt', 'dart', 'goss', 'ridge']  # Blending重み最適化を行った順番
-        self.classification_model_names : List[str] = ['gbdt_class', 'dart_class', 'goss_class']  # Blending重み最適化を行った順番
-        self.regression_models, self.classification_models = self._load_models()
-        self.blending_weights : NDArray[float] = np.load(os.path.join(self.models_dir_path, 'blending_weights.npy'), allow_pickle='TRUE')
-        assert len(self.blending_weights) == 7, f'blending_weightsの要素数が7で無く不正. length of blendgin_weights: {self.blending_weights}'
+        self.features : List[str] = BYBIT_FEAURES  # 使用する特徴量
+        self.models_dir_path : str = os.path.join('trained_models', 'bybit_ceeling')
+        self.regression_model_names : List[str] = ['gbdt']  # Blending重み最適化を行った順番
+        self.regression_models : List[Model] = self._load_models()
 
     def predict(self, df_features: pd.DataFrame) -> pd.DataFrame:
         """MLによる予測結果と、orderを出す価格を算出
@@ -63,56 +55,21 @@ class MLJudgement:
             MLによる予測結果と、orderを出す価格をもつdf
         """
         X = df_features[self.features]
-        buy_preds : List[NDArray[int]] = []
-        sell_preds : List[NDArray[int]] = []
         # 回帰モデルで予測
-        for model_name in self.regression_model_names:
-            buy_model : Model = self.regression_models['buy'][model_name]
-            buy_pred : NDArray[float] = buy_model.predict(X)
-            buy_preds.append(np.sign(buy_pred))  # 1: should trade, -1: should not trade
-            sell_model : Model = self.regression_models['sell'][model_name]
-            sell_pred : NDArray[float] = sell_model.predict(X)
-            sell_preds.append(np.sign(sell_pred))  # 1: should trade, -1: should not trade
-        # 分類モデルで予測
-        for model_name in self.classification_model_names:
-            buy_model : Model = self.classification_models['buy'][model_name]
-            buy_pred : NDArray[int] = buy_model.predict(X)
-            buy_preds.append(buy_pred)  # 1: should trade, -1: should not trade
-            sell_model : Model = self.classification_models['sell'][model_name]
-            sell_pred : NDArray[int] = sell_model.predict(X)
-            sell_preds.append(sell_pred)  # 1: should trade, -1: should not trade
+        model : Model = self.regression_models[0]
+        y_pred = model.predict(X)
         
         df = df_features.copy()
-        # order価格
-        df['buy_price'] = df['close'] - df['ATR'] * 0.36
-        df['sell_price'] = df['close'] + df['ATR'] * 0.36
         # Blendingで予測
-        df['y_pred_buy'] = np.average(buy_preds, axis=0, weights=self.blending_weights)
-        df['y_pred_sell'] = np.average(sell_preds, axis=0, weights=self.blending_weights)
+        df['y_pred'] = y_pred
         return df
 
-    def _load_models(self) -> Tuple[Dict[str, Dict[str, Model]]]:
-        regression_models : Dict[str, Dict[str, Model]] = {
-            'buy': {},
-            'sell': {},
-        }
-        classification_models : Dict[str, Dict[str, Model]] = {
-            'buy': {},
-            'sell': {},
-        }
+    def _load_models(self) -> List[Model]:
+        regression_models : List[Model] = []
         for model_name in self.regression_model_names:
-            regression_models['buy'][model_name] = joblib.load(os.path.join(self.models_dir_path, f'{model_name}_buy.xz'))
-            regression_models['sell'][model_name] = joblib.load(os.path.join(self.models_dir_path, f'{model_name}_sell.xz'))
-        for model_name in self.classification_model_names:
-            classification_models['buy'][model_name] = joblib.load(os.path.join(self.models_dir_path, f'{model_name}_buy.xz'))
-            classification_models['sell'][model_name] = joblib.load(os.path.join(self.models_dir_path, f'{model_name}_sell.xz'))
+            regression_models.append(joblib.load(os.path.join(self.models_dir_path, f'{model_name}.xz')))
 
-        assert len(regression_models['buy']) == 4
-        assert len(regression_models['sell']) == 4
-        assert len(classification_models['buy']) == 3
-        assert len(classification_models['sell']) == 3
-
-        return regression_models, classification_models
+        return regression_models
 
 
 class FeatureCreator:
@@ -123,24 +80,9 @@ class FeatureCreator:
     create_features -> pd.DataFrame
         特徴量を算出する
     """
-    def create_features(
-            self, 
-            df_btc_15m: pd.DataFrame,
-            df_btc_5m: pd.DataFrame,
-            df_btc_3m: pd.DataFrame,
-            df_eth_15m: pd.DataFrame,
-            df_eth_5m: pd.DataFrame) -> pd.DataFrame:
-        # 各タイムスケールで特徴量を計算
+    def create_features(self, df_btc_15m: pd.DataFrame) -> pd.DataFrame:
+        # 特徴量を計算
         df = self._calc_features(df_ohlcvs=df_btc_15m).dropna()
-        df_btc_5mf = self._calc_features(df_ohlcvs=df_btc_5m).dropna()
-        df_btc_3mf = self._calc_features(df_ohlcvs=df_btc_3m).dropna()
-        df_ethf = self._calc_features(df_ohlcvs=df_eth_15m).dropna()
-        df_eth_5mf = self._calc_features(df_ohlcvs=df_eth_5m).dropna()
-        # 15分間隔に合わせて、dfを結合
-        df = pd.merge(df, self._get_every_15min_datas(df_btc_5mf), on='timestamp', suffixes=['', '_btc5m'])
-        df = pd.merge(df, self._get_every_15min_datas(df_btc_3mf), on='timestamp', suffixes=['', '_btc3m'])
-        df = pd.merge(df, df_ethf, on='timestamp', suffixes=['', '_eth'])
-        df = pd.merge(df, self._get_every_15min_datas(df_eth_5mf), on='timestamp', suffixes=['', '_eth5m'])
         df = df.set_index('timestamp')
 
         df_features = df.dropna()
@@ -161,17 +103,21 @@ class FeatureCreator:
         df['BBANDS_upperband'] -= hilo
         df['BBANDS_middleband'] -= hilo
         df['BBANDS_lowerband'] -= hilo
-        df['DEMA'] = talib.DEMA(close, timeperiod=30) - hilo
-        df['EMA'] = talib.EMA(close, timeperiod=30) - hilo
+        df['DEMA'] = talib.DEMA(close, timeperiod=20) - hilo
+        df['EMA'] = talib.EMA(close, timeperiod=20) - hilo
         df['HT_TRENDLINE'] = talib.HT_TRENDLINE(close) - hilo
-        df['KAMA'] = talib.KAMA(close, timeperiod=30) - hilo
-        df['MA'] = talib.MA(close, timeperiod=30, matype=0) - hilo
+        df['KAMA'] = talib.KAMA(close, timeperiod=20) - hilo
+        df['MA'] = talib.MA(close, timeperiod=20, matype=0) - hilo
         df['MIDPOINT'] = talib.MIDPOINT(close, timeperiod=14) - hilo
-        df['SMA'] = talib.SMA(close, timeperiod=30) - hilo
+        df['SMA'] = talib.SMA(close, timeperiod=20) - hilo
+        df['SMA_'] = talib.SMA(close, timeperiod=20)
+        df['up_down'] = np.log(df['close'] / df['SMA_'])
+        for i in range(1, 40):
+            df[f'up_down_{i}'] = df['up_down'].shift(i)
         df['T3'] = talib.T3(close, timeperiod=5, vfactor=0) - hilo
-        df['TEMA'] = talib.TEMA(close, timeperiod=30) - hilo
-        df['TRIMA'] = talib.TRIMA(close, timeperiod=30) - hilo
-        df['WMA'] = talib.WMA(close, timeperiod=30) - hilo
+        df['TEMA'] = talib.TEMA(close, timeperiod=20) - hilo
+        df['TRIMA'] = talib.TRIMA(close, timeperiod=20) - hilo
+        df['WMA'] = talib.WMA(close, timeperiod=20) - hilo
 
         df['ADX'] = talib.ADX(high, low, close, timeperiod=14)
         df['ADXR'] = talib.ADXR(high, low, close, timeperiod=14)
@@ -193,7 +139,7 @@ class FeatureCreator:
         df['STOCH_slowk'], df['STOCH_slowd'] = talib.STOCH(high, low, close, fastk_period=5, slowk_period=3, slowk_matype=0, slowd_period=3, slowd_matype=0)
         df['STOCHF_fastk'], df['STOCHF_fastd'] = talib.STOCHF(high, low, close, fastk_period=5, fastd_period=3, fastd_matype=0)
         df['STOCHRSI_fastk'], df['STOCHRSI_fastd'] = talib.STOCHRSI(close, timeperiod=14, fastk_period=5, fastd_period=3, fastd_matype=0)
-        df['TRIX'] = talib.TRIX(close, timeperiod=30)
+        df['TRIX'] = talib.TRIX(close, timeperiod=20)
         df['ULTOSC'] = talib.ULTOSC(high, low, close, timeperiod1=7, timeperiod2=14, timeperiod3=28)
         df['WILLR'] = talib.WILLR(high, low, close, timeperiod=14)
 
@@ -212,7 +158,7 @@ class FeatureCreator:
         df['HT_TRENDMODE'] = talib.HT_TRENDMODE(close)
 
         df['BETA'] = talib.BETA(high, low, timeperiod=5)
-        df['CORREL'] = talib.CORREL(high, low, timeperiod=30)
+        df['CORREL'] = talib.CORREL(high, low, timeperiod=20)
         df['LINEARREG'] = talib.LINEARREG(close, timeperiod=14) - close
         df['LINEARREG_ANGLE'] = talib.LINEARREG_ANGLE(close, timeperiod=14)
         df['LINEARREG_INTERCEPT'] = talib.LINEARREG_INTERCEPT(close, timeperiod=14) - close
@@ -284,15 +230,3 @@ class FeatureCreator:
                 downhige[i] = (o - l) / c
         downhige = downhige/close
         return downhige
-
-    def _get_every_15min_datas(self, df: pd.DataFrame) -> pd.DataFrame:
-        """15分ごとのにデータを整形する"""
-
-        def parse_to_minute(timestamp: Union[np.datetime64, datetime]) -> int:
-            if isinstance(timestamp, np.datetime64):
-                timestamp : datetime = timestamp.astype('M8[s]').astype('O')  # numpy.datetime64 -> datetime.datetimeにキャスト
-            return timestamp.minute
-
-        df = df.copy()
-        df['temp'] = np.vectorize(parse_to_minute)(df['timestamp'])
-        return df[df['temp'] % 15 == 0].drop(columns=['temp'])
