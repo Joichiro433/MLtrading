@@ -56,13 +56,13 @@ def main_trade():
         df_pred : pd.DataFrame = ml_judgement.predict(df_features=df_features)
 
         y_pred : float = df_pred['y_pred'].iloc[-1]  # pred>0: shoud buy, pred<0: should sell
-        sell_price, buy_price = api_client.get_bid_ask()
         logger.info('Prediction by ML')
         logger.info(f'y_pred: {y_pred}')
-        logger.info(f'buy_price: {buy_price}')
-        logger.info(f'sell_price: {sell_price}')
         now_position : Position = api_client.get_position()
         logger.info(f'Now position: {now_position}')
+        buy_price, sell_price = api_client.get_bid_ask()
+        logger.info(f'buy_price: {buy_price}')
+        logger.info(f'sell_price: {sell_price}')
         # entry
         if now_position.side == constants.NONE:
             logger.info('Entry!')
@@ -75,21 +75,44 @@ def main_trade():
                 order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=qty, price=sell_price)
                 logger.info(f'Create entry order!: {order}')
                 api_client.create_order(order=order)
-        # exit
+        # exit & entry
         elif now_position.side == constants.BUY:
             logger.info('Exit buy position!')
+            qty : int = int(api_client.get_available_qty() * settings.leverage * 0.95)
             if y_pred < 0:
-                order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=now_position.size, price=sell_price)
+                order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=now_position.size*2+qty, price=sell_price)  # ドテン
                 logger.info(f'Create exit order!: {order}')
                 api_client.create_order(order=order)
+                update_order_until_execution(api_client=api_client)
         elif now_position.side == constants.SELL:
             logger.info('Exit sell position!')
+            qty : int = int(api_client.get_available_qty() * settings.leverage * 0.95)
             if y_pred > 0:
-                order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=now_position.size, price=buy_price)
+                order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=now_position.size*2+qty, price=buy_price)  # ドテン
                 logger.info(f'Create exit order!: {order}')
                 api_client.create_order(order=order)
+                update_order_until_execution(api_client=api_client)
 
-        time.sleep(60 * 14)  # 14分wait
+        time.sleep(60)  # 1分wait
+
+
+def update_order_until_execution(api_client: ApiClient) -> None:
+    """orderが約定するまで価格を更新し続ける"""
+    while True:
+        time.sleep(10)
+        order_list : List[Order] = api_client.get_active_orders()
+        if len(order_list) == 0:
+            return 
+        order : Order = order_list[0]
+        new_buy_price, new_sell_price = api_client.get_bid_ask()
+        if order.side == constants.BUY and order.price != new_buy_price:
+            api_client.cancel_all_active_orders()
+            order : Order = Order(side=constants.BUY, order_type=constants.LIMIT, qty=order.qty, price=new_buy_price)
+            logger.info(f'update order!: {order}')
+        elif order.side == constants.SELL and order.price != new_sell_price:
+            api_client.cancel_all_active_orders()
+            order : Order = Order(side=constants.SELL, order_type=constants.LIMIT, qty=order.qty, price=new_sell_price)
+            logger.info(f'update order!: {order}')
 
 
 if __name__ == '__main__':

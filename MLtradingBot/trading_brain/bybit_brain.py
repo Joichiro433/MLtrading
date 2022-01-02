@@ -60,7 +60,6 @@ class MLJudgement:
         y_pred = model.predict(X)
         
         df = df_features.copy()
-        # Blendingで予測
         df['y_pred'] = y_pred
         return df
 
